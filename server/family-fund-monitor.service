@@ -1,0 +1,30 @@
+[Unit]
+Description=Family Fund NAV Monitor (Gmail IMAP IDLE)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 改成您服务器上运行此服务的普通用户
+User=cecilia
+Group=cecilia
+
+# 改成您 clone 下来的 family 仓库路径
+WorkingDirectory=/home/cecilia/family
+
+# 从 config.env 读环境变量（注意 chmod 600）
+EnvironmentFile=/home/cecilia/family/server/config.env
+
+# 如需虚拟环境，改成 /home/cecilia/family/.venv/bin/python
+ExecStart=/usr/bin/python3 /home/cecilia/family/server/monitor.py
+
+# 自动重启
+Restart=always
+RestartSec=30
+
+# 输出重定向到 journalctl
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
