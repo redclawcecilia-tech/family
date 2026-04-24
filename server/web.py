@@ -22,7 +22,7 @@ if _cfg.exists():
         os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
 
 HOST = os.environ.get('WEB_HOST', '0.0.0.0')
-PORT = int(os.environ.get('WEB_PORT', '80'))
+PORT = int(os.environ.get('WEB_PORT', '8080'))
 REPO_PATH = Path(os.environ.get('REPO_PATH', Path(__file__).resolve().parent.parent))
 
 # 允许访问的文件（白名单）
