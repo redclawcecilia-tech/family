@@ -366,6 +366,39 @@ const CONFIG = {
     line-height: 1.5;
     text-align: center;
   }
+  .form-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 12px;
+  }
+  .form-label {
+    font-size: 13px; color: #555;
+    width: 80px; text-align: right; flex-shrink: 0;
+  }
+  .form-input {
+    flex: 1;
+    padding: 9px 12px;
+    border: 1px solid #d5dbe5;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    color: #1a3668;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .form-input:focus { border-color: #1a3668; }
+  .modal-result {
+    margin-top: 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 10px 12px;
+    border-radius: 8px;
+    display: none;
+  }
+  .modal-result.show { display: block; }
+  .modal-result.success { background: #e3f6ea; color: #1d7a3d; }
+  .modal-result.error { background: #fde7e7; color: #c54141; }
+  .modal-result.loading { background: #eaf3fd; color: #1a3668; }
+  .modal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   @media (max-width: 360px) {
     .hero-amount { font-size: 34px; }
@@ -385,21 +418,30 @@ const CONFIG = {
     <div class="report-date" id="reportDate">—— 截至 2026年04月22日</div>
   </div>
 
-  <!-- 更新指令弹窗 -->
+  <!-- 更新净值表单弹窗 -->
   <div class="modal-overlay" id="updateModal">
     <div class="modal-box">
-      <div class="modal-title">🔄 更新本周净值</div>
+      <div class="modal-title">🔄 更新净值</div>
       <div class="modal-desc">
-        孩子专用：打开 <strong>Cowork Mode</strong>，把下面这句话粘贴发送给 Claude，
-        它会自动从 Gmail 读取最新邮件、重新计算数字、推送到 GitHub，3 分钟内这个网页就是最新的。
+        从青琰的【基金净值】邮件里复制两个数字粘贴进来，点提交就自动部署 —— 约 45 秒后父母的页面就是最新的。
       </div>
-      <div class="modal-cmd" id="modalCmd">更新本周净值</div>
-      <div class="modal-actions">
-        <button class="modal-btn primary" id="copyCmdBtn">复制指令</button>
-        <button class="modal-btn" id="closeModalBtn">关闭</button>
-      </div>
+      <form id="updateForm">
+        <div class="form-row">
+          <label class="form-label">估值日期</label>
+          <input class="form-input" id="fldDate" type="date" required>
+        </div>
+        <div class="form-row">
+          <label class="form-label">单位净值</label>
+          <input class="form-input" id="fldNav" type="number" step="0.0001" min="0.5" max="5" placeholder="例：1.2966" required>
+        </div>
+        <div class="modal-actions">
+          <button class="modal-btn primary" id="submitBtn" type="submit">提交并部署</button>
+          <button class="modal-btn" id="closeModalBtn" type="button">取消</button>
+        </div>
+      </form>
+      <div class="modal-result" id="modalResult"></div>
       <div class="modal-hint">
-        自动任务已设置：每周二上午会自动执行一次。手动触发用此按钮。
+        每周二上午会自动跑一次（扫 Gmail 自动更新），这个按钮只是手动补一次用的。
       </div>
     </div>
   </div>
@@ -551,42 +593,71 @@ const CONFIG = {
 </div>
 
 <script>
-// 更新净值按钮交互
+// 更新净值按钮交互（提交到 /api/update → 自动部署）
 (function setupUpdateBtn() {
   const btn = document.getElementById('updateBtn');
   const modal = document.getElementById('updateModal');
   const closeBtn = document.getElementById('closeModalBtn');
-  const copyBtn = document.getElementById('copyCmdBtn');
-  const cmd = document.getElementById('modalCmd');
+  const form = document.getElementById('updateForm');
+  const submitBtn = document.getElementById('submitBtn');
+  const result = document.getElementById('modalResult');
+  const fldDate = document.getElementById('fldDate');
+  const fldNav = document.getElementById('fldNav');
 
-  btn.addEventListener('click', () => modal.classList.add('active'));
+  function showResult(text, type) {
+    result.textContent = text;
+    result.className = 'modal-result show ' + type;
+  }
+  function hideResult() {
+    result.className = 'modal-result';
+    result.textContent = '';
+  }
+
+  btn.addEventListener('click', () => {
+    hideResult();
+    // 默认填入今日日期
+    const today = new Date().toISOString().slice(0,10);
+    fldDate.value = today;
+    modal.classList.add('active');
+  });
   closeBtn.addEventListener('click', () => modal.classList.remove('active'));
   modal.addEventListener('click', (e) => {
     if (e.target === modal) modal.classList.remove('active');
   });
 
-  copyBtn.addEventListener('click', async () => {
-    const text = cmd.textContent.trim();
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const date = fldDate.value;
+    const nav = parseFloat(fldNav.value);
+    if (!date || !nav) return;
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '提交中...';
+    showResult('⏳ 正在提交到服务器...', 'loading');
+
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
+      const resp = await fetch('/api/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, nav })
+      });
+      const data = await resp.json();
+
+      if (resp.ok && data.success) {
+        showResult(`✅ 提交成功！Commit ${data.commitSha}，${data.refreshInSeconds || 45}秒后自动刷新页面显示最新数据。`, 'success');
+        submitBtn.textContent = '✓ 已提交';
+        setTimeout(() => {
+          location.reload();
+        }, (data.refreshInSeconds || 45) * 1000);
       } else {
-        // fallback 方法
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
+        showResult('❌ ' + (data.error || '提交失败') + (data.detail ? '\n' + data.detail : ''), 'error');
+        submitBtn.disabled = false;
+        submitBtn.textContent = '重试';
       }
-      copyBtn.textContent = '✓ 已复制';
-      copyBtn.classList.add('copied');
-      setTimeout(() => {
-        copyBtn.textContent = '复制指令';
-        copyBtn.classList.remove('copied');
-      }, 2000);
     } catch (err) {
-      copyBtn.textContent = '长按选择文字复制';
+      showResult('❌ 网络错误：' + err.message, 'error');
+      submitBtn.disabled = false;
+      submitBtn.textContent = '重试';
     }
   });
 })();
