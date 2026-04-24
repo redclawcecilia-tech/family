@@ -271,9 +271,106 @@ const CONFIG = {
   }
   .brand { color: #1a3668; font-weight: 600; }
 
+  /* 更新按钮 */
+  .update-btn {
+    position: absolute;
+    top: 16px; right: 16px;
+    background: rgba(255,255,255,0.15);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.25);
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    z-index: 3;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .update-btn:hover { background: rgba(255,255,255,0.25); }
+  .update-btn:active { transform: scale(0.95); }
+
+  /* 弹窗 */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+    padding: 20px;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal-box {
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px 22px;
+    max-width: 340px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+  .modal-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1a3668;
+    margin-bottom: 10px;
+  }
+  .modal-desc {
+    font-size: 13px;
+    color: #666;
+    line-height: 1.6;
+    margin-bottom: 14px;
+  }
+  .modal-cmd {
+    background: #f2f4f8;
+    border: 1px dashed #c5d0de;
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #1a3668;
+    text-align: center;
+    margin-bottom: 16px;
+    font-family: "PingFang SC", sans-serif;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+  }
+  .modal-btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    background: #f0f1f5;
+    color: #555;
+    transition: all 0.15s;
+  }
+  .modal-btn:active { transform: scale(0.97); }
+  .modal-btn.primary {
+    background: linear-gradient(135deg, #1a3668, #3567b0);
+    color: #fff;
+  }
+  .modal-btn.primary.copied {
+    background: linear-gradient(135deg, #1d7a3d, #2da050);
+  }
+  .modal-hint {
+    margin-top: 12px;
+    font-size: 11px;
+    color: #999;
+    line-height: 1.5;
+    text-align: center;
+  }
+
   @media (max-width: 360px) {
     .hero-amount { font-size: 34px; }
     .metric-value { font-size: 18px; }
+    .update-btn { font-size: 11px; padding: 5px 10px; }
   }
 </style>
 </head>
@@ -282,9 +379,29 @@ const CONFIG = {
 <div class="page">
 
   <div class="header">
+    <button class="update-btn" id="updateBtn" title="点击弹出更新指令（只给您用，父母看不到此按钮的提示）">🔄 更新净值</button>
     <div class="greeting" id="greeting">爸妈好：</div>
     <div class="title">您的资产报告</div>
     <div class="report-date" id="reportDate">—— 截至 2026年04月22日</div>
+  </div>
+
+  <!-- 更新指令弹窗 -->
+  <div class="modal-overlay" id="updateModal">
+    <div class="modal-box">
+      <div class="modal-title">🔄 更新本周净值</div>
+      <div class="modal-desc">
+        孩子专用：打开 <strong>Cowork Mode</strong>，把下面这句话粘贴发送给 Claude，
+        它会自动从 Gmail 读取最新邮件、重新计算数字、推送到 GitHub，3 分钟内这个网页就是最新的。
+      </div>
+      <div class="modal-cmd" id="modalCmd">更新本周净值</div>
+      <div class="modal-actions">
+        <button class="modal-btn primary" id="copyCmdBtn">复制指令</button>
+        <button class="modal-btn" id="closeModalBtn">关闭</button>
+      </div>
+      <div class="modal-hint">
+        自动任务已设置：每周二上午会自动执行一次。手动触发用此按钮。
+      </div>
+    </div>
   </div>
 
   <div class="hero-card">
@@ -434,6 +551,46 @@ const CONFIG = {
 </div>
 
 <script>
+// 更新净值按钮交互
+(function setupUpdateBtn() {
+  const btn = document.getElementById('updateBtn');
+  const modal = document.getElementById('updateModal');
+  const closeBtn = document.getElementById('closeModalBtn');
+  const copyBtn = document.getElementById('copyCmdBtn');
+  const cmd = document.getElementById('modalCmd');
+
+  btn.addEventListener('click', () => modal.classList.add('active'));
+  closeBtn.addEventListener('click', () => modal.classList.remove('active'));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.classList.remove('active');
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    const text = cmd.textContent.trim();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // fallback 方法
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      copyBtn.textContent = '✓ 已复制';
+      copyBtn.classList.add('copied');
+      setTimeout(() => {
+        copyBtn.textContent = '复制指令';
+        copyBtn.classList.remove('copied');
+      }, 2000);
+    } catch (err) {
+      copyBtn.textContent = '长按选择文字复制';
+    }
+  });
+})();
+
 (function render() {
   const fmtMoney = n => n >= 10000 ? (n/10000).toFixed(2) + '万' : n.toFixed(0);
   const fmtFullMoney = n => Math.round(n).toLocaleString('zh-CN');
