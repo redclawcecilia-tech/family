@@ -25,6 +25,18 @@ except ImportError:
     print('缺少 imapclient 库。请执行：pip install imapclient')
     sys.exit(1)
 
+# ============ 自动加载 config.env（同目录下）============
+_cfg = Path(__file__).resolve().parent / 'config.env'
+if _cfg.exists():
+    for _ln in _cfg.read_text(encoding='utf-8').splitlines():
+        _ln = _ln.strip()
+        if not _ln or _ln.startswith('#') or '=' not in _ln:
+            continue
+        _k, _v = _ln.split('=', 1)
+        _k = _k.strip()
+        _v = _v.strip().strip('"').strip("'")
+        os.environ.setdefault(_k, _v)
+
 # ============ 配置 ============
 GMAIL_USER = os.environ['GMAIL_USER']
 GMAIL_APP_PASSWORD = os.environ['GMAIL_APP_PASSWORD'].replace(' ', '')  # 去掉空格

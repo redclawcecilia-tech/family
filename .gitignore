@@ -1,0 +1,7 @@
+server/config.env
+server/windows/config.env
+*.log
+logs/
+nssm.exe
+__pycache__/
+*.pyc
