@@ -25,6 +25,14 @@ except ImportError:
     print('缺少 imapclient 库。请执行：pip install imapclient')
     sys.exit(1)
 
+# Windows 默认没有 CA 证书 bundle，优先用 certifi 的
+import ssl
+try:
+    import certifi
+    _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    _SSL_CTX = None  # 回退到系统默认
+
 # ============ 自动加载 config.env（同目录下）============
 _cfg = Path(__file__).resolve().parent / 'config.env'
 if _cfg.exists():
@@ -202,7 +210,8 @@ def main():
 
     while True:
         try:
-            with IMAPClient('imap.gmail.com', port=993, ssl=True) as client:
+            with IMAPClient('imap.gmail.com', port=993, ssl=True,
+                            ssl_context=_SSL_CTX) as client:
                 client.login(GMAIL_USER, GMAIL_APP_PASSWORD)
                 client.select_folder('INBOX')
                 log.info('🔐 已登录 Gmail')
