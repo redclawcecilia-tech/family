@@ -174,10 +174,25 @@ def update_html(date, nav):
         mm = pattern.search(content)
         if not mm:
             raise ValueError(f'未在 HTML 中找到 {name} 数组')
-        body = mm.group(2).rstrip()
-        if body and not body.endswith(','):
-            body += ','
-        body += '\n' + entry + '\n  '
+        body = mm.group(2)
+
+        # 在最后一个对象条目 `}` 的正后方插入逗号（如果还没有）
+        # 这样即使最后一行有行尾注释 `// ...`，逗号也不会落进注释里
+        # 匹配：最后一个 `}` 后面可选的空白+行尾注释，之后到 `]` 之前
+        last_brace = re.search(r'\}(?=[ \t]*(//[^\n]*)?\s*$)', body, re.MULTILINE)
+        if last_brace:
+            # 检查这个 `}` 正后方（跳过空白）第一个非空白非注释字符是不是逗号
+            tail = body[last_brace.end():]
+            # 跳过空白 + 行尾注释
+            skipped = re.match(r'[ \t]*(?://[^\n]*)?', tail)
+            after = tail[skipped.end() if skipped else 0:].lstrip()
+            if not after.startswith(','):
+                # 在 `}` 正后方插逗号，保留原注释
+                insert_pos = last_brace.end()
+                body = body[:insert_pos] + ',' + body[insert_pos:]
+
+        # 追加新条目
+        body = body.rstrip() + '\n' + entry + '\n  '
         content = content[:mm.start()] + mm.group(1) + '\n' + body + mm.group(3) + content[mm.end():]
 
     content = re.sub(r'latestDate\s*:\s*["\'][\d-]+["\']',
