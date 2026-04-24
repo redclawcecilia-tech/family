@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no">
+<title>爸妈的资产报告 · 青琰琰知一号</title>
+<script>
+/* ==========================================================
+   【编辑区】每次收到净值邮件后，只需改这里：
+   1. 在 personalNav 末尾追加一行 { date, nav }
+   2. 其他地方都会自动更新
+   ========================================================== */
+const CONFIG = {
+  parentGreeting: "爸妈",
+  investorName: "张诗雨",
+
+  // 基金产品信息
+  productName: "青琰琰知一号私募证券投资基金",
+  productShort: "青琰琰知一号（A级）",
+  fundCode: "SXR047",
+  manager: "上海青琰私募基金管理有限公司",
+  custodian: "中信证券股份有限公司",
+  registrar: "中信中证投资服务有限责任公司",
+  fundManager: "傅浩",
+
+  // 【申购信息】（不要改）
+  initialAmount: 1000000,       // 本金 100 万
+  initialDate: "2026-03-31",    // 建仓日
+  initialNAV: 1.2869,           // 建仓净值
+  shares: 777061.15,            // 确认份额
+
+  // 【您个人的净值更新记录】—— 每次收到邮件就加一行
+  personalNav: [
+    { date: "2026-03-31", nav: 1.2869 },
+    { date: "2026-04-22", nav: 1.2966 }   // 自 Gmail 邮件自动读取
+  ],
+
+  // 【琰知一号基金历史净值】（来自招商 PPT，展示给父母建立信心）
+  fundHistory: [
+    { date: "2025-04-21", nav: 1.1517 },
+    { date: "2025-04-30", nav: 1.1508 },
+    { date: "2025-05-31", nav: 1.1574 },
+    { date: "2025-06-30", nav: 1.1632 },
+    { date: "2025-07-31", nav: 1.1744 },
+    { date: "2025-08-31", nav: 1.2087 },
+    { date: "2025-09-30", nav: 1.2344 },
+    { date: "2025-10-31", nav: 1.2497 },
+    { date: "2025-11-30", nav: 1.2519 },
+    { date: "2025-12-31", nav: 1.2613 },
+    { date: "2026-01-31", nav: 1.2776 },
+    { date: "2026-02-13", nav: 1.2828 },
+    { date: "2026-03-31", nav: 1.2869 },
+    { date: "2026-04-22", nav: 1.2966 }
+  ],
+
+  // 【基金风险指标】（琰知一号，来自 PPT）
+  annualizedReturn: 14.32,
+  maxDrawdown: -0.41,
+  sharpeRatio: 7.00,
+  annualVolatility: 2.05,
+  intervalReturn: 11.38,
+  fundInceptionDate: "2025-04-21",
+
+  // 【费率结构】（琰知一号 PPT 第28页）
+  fees: {
+    managementFeeAnnual: 0.01,        // 管理费 1%/年（已在每日净值中扣除，无需单独计算）
+    subscriptionFee: 0.00,            // 申购费 1% 可免 —— 按0处理
+    perfFeeHurdleRate: 0.06,          // 业绩报酬门槛（年化）
+    perfFeeRate: 0.60,                // 业绩报酬比例
+    perfFeeFloor: 0.06,               // 保底年化（扣费后不低于）
+    perfFeeCrystalDates: "每季度末月（3/6/9/12月）最后一个工作日"
+  }
+};
+/* ==========================================================
+   编辑区结束 —— 下面无需改动
+   ========================================================== */
+</script>
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    background: #f2f4f8;
+    color: #1a1a1a;
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+    font-variant-numeric: tabular-nums;
+  }
+  .page {
+    max-width: 420px;
+    margin: 0 auto;
+    background: #f2f4f8;
+    padding: 0 0 32px;
+    min-height: 100vh;
+  }
+  .header {
+    background: linear-gradient(135deg, #1a3668 0%, #2a4f8c 60%, #3567b0 100%);
+    color: #fff;
+    padding: 28px 24px 40px;
+    position: relative;
+    overflow: hidden;
+  }
+  .header::before {
+    content: ""; position: absolute;
+    right: -40px; top: -40px;
+    width: 180px; height: 180px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+  }
+  .header::after {
+    content: ""; position: absolute;
+    right: 30px; bottom: -60px;
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    background: rgba(212, 160, 23, 0.12);
+  }
+  .greeting { font-size: 17px; opacity: 0.9; margin-bottom: 6px; position: relative; z-index: 1; }
+  .title { font-size: 26px; font-weight: 700; letter-spacing: 1px; position: relative; z-index: 1; }
+  .report-date { font-size: 13px; opacity: 0.75; margin-top: 10px; position: relative; z-index: 1; }
+
+  .hero-card {
+    background: #fff;
+    margin: -24px 16px 16px;
+    padding: 24px 22px;
+    border-radius: 18px;
+    box-shadow: 0 8px 28px rgba(26, 54, 104, 0.12);
+    position: relative; z-index: 2;
+  }
+  .hero-label { font-size: 14px; color: #666; margin-bottom: 6px; }
+  .hero-amount {
+    font-size: 40px; font-weight: 700; color: #1a3668;
+    letter-spacing: -1px; line-height: 1.1; margin-bottom: 4px;
+  }
+  .hero-amount .unit { font-size: 18px; font-weight: 500; color: #666; margin-left: 4px; }
+  .hero-profit {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+    margin-top: 14px; padding-top: 14px;
+    border-top: 1px dashed #e5e7ef;
+  }
+  .profit-pill {
+    display: inline-flex; align-items: center;
+    padding: 6px 12px; border-radius: 20px;
+    font-size: 15px; font-weight: 600;
+  }
+  .profit-pill.gain {
+    background: linear-gradient(135deg, #f0fbf3, #e3f6ea);
+    color: #1d7a3d;
+  }
+  .profit-pill.flat {
+    background: linear-gradient(135deg, #f6f6f9, #eceef5);
+    color: #556578;
+  }
+  .profit-pill .arrow { font-size: 13px; margin-right: 4px; }
+  .profit-text { font-size: 13px; color: #666; }
+
+  .after-fee {
+    margin-top: 12px; padding: 12px 14px;
+    background: linear-gradient(135deg, #eaf3fd, #dfecfb);
+    border-radius: 10px;
+    font-size: 13px; color: #1a3668;
+    line-height: 1.55;
+  }
+  .after-fee .af-label { color: #6a7a94; font-size: 12px; }
+  .after-fee .af-value { font-weight: 700; font-size: 15px; color: #1a3668; }
+  .after-fee-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-top: 4px;
+  }
+
+  .metrics {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 12px; margin: 0 16px 16px;
+  }
+  .metric-card {
+    background: #fff; padding: 18px 16px;
+    border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+  }
+  .metric-label { font-size: 13px; color: #888; margin-bottom: 8px; }
+  .metric-value { font-size: 22px; font-weight: 700; color: #1a3668; }
+  .metric-value.positive { color: #1d7a3d; }
+  .metric-value.muted { color: #889; font-size: 18px; }
+  .metric-sub { font-size: 11px; color: #aaa; margin-top: 4px; }
+
+  .card {
+    background: #fff;
+    margin: 0 16px 16px;
+    border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+    padding: 20px;
+  }
+  .card-title {
+    font-size: 16px; font-weight: 600; color: #1a3668;
+    margin-bottom: 14px; display: flex; align-items: center;
+  }
+  .card-title::before {
+    content: ""; display: inline-block;
+    width: 4px; height: 16px;
+    background: linear-gradient(180deg, #d4a017, #1a3668);
+    border-radius: 2px; margin-right: 8px;
+  }
+  .card-subtitle {
+    font-size: 12px; color: #aaa;
+    margin-left: auto; font-weight: 400;
+  }
+
+  .pending-note {
+    background: linear-gradient(135deg, #fff8e5, #fff3d0);
+    border-left: 3px solid #d4a017;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13px; color: #6a5a1f;
+    line-height: 1.6;
+    margin-top: 8px;
+  }
+
+  .nav-chart { width: 100%; height: 180px; display: block; }
+  .chart-axis {
+    display: flex; justify-content: space-between;
+    font-size: 11px; color: #999; margin-top: 6px; padding: 0 4px;
+  }
+  .monthly-chart { width: 100%; height: 160px; display: block; margin-top: 6px; }
+  .legend {
+    display: flex; justify-content: center;
+    gap: 20px; font-size: 11px; color: #888; margin-top: 8px;
+  }
+  .legend-item { display: inline-flex; align-items: center; }
+  .legend-dot {
+    width: 10px; height: 10px; border-radius: 3px;
+    display: inline-block; margin-right: 5px; vertical-align: middle;
+  }
+
+  .info-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 11px 0; border-bottom: 1px solid #f0f1f5; font-size: 14px;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-label { color: #888; }
+  .info-value { color: #333; font-weight: 500; max-width: 60%; text-align: right; word-break: break-all; }
+
+  .risk-item { margin-bottom: 16px; }
+  .risk-item:last-child { margin-bottom: 0; }
+  .risk-top {
+    display: flex; justify-content: space-between;
+    align-items: baseline; margin-bottom: 6px;
+  }
+  .risk-name { font-size: 14px; color: #333; font-weight: 500; }
+  .risk-value { font-size: 16px; font-weight: 700; color: #1a3668; }
+  .risk-desc { font-size: 12px; color: #888; line-height: 1.5; }
+  .risk-badge {
+    display: inline-block; font-size: 11px;
+    padding: 2px 8px; border-radius: 10px;
+    margin-left: 6px; font-weight: 500;
+  }
+  .badge-excellent { background: #e3f6ea; color: #1d7a3d; }
+  .badge-good { background: #eaf1fc; color: #1a3668; }
+
+  .footer-note {
+    margin: 20px 16px 0; padding: 16px 18px;
+    background: rgba(212, 160, 23, 0.08);
+    border-left: 3px solid #d4a017;
+    border-radius: 8px;
+    font-size: 12px; color: #6a5a1f; line-height: 1.7;
+  }
+  .footer-meta {
+    text-align: center; font-size: 11px; color: #aaa;
+    margin-top: 20px; line-height: 1.6;
+  }
+  .brand { color: #1a3668; font-weight: 600; }
+
+  @media (max-width: 360px) {
+    .hero-amount { font-size: 34px; }
+    .metric-value { font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="header">
+    <div class="greeting" id="greeting">爸妈好：</div>
+    <div class="title">您的资产报告</div>
+    <div class="report-date" id="reportDate">—— 截至 2026年04月22日</div>
+  </div>
+
+  <div class="hero-card">
+    <div class="hero-label" id="heroLabel">当前资产总值（账面）</div>
+    <div class="hero-amount">
+      <span id="currentValue">0</span><span class="unit">元</span>
+    </div>
+    <div class="hero-profit" id="heroProfit"></div>
+    <div class="after-fee" id="afterFee"></div>
+  </div>
+
+  <div class="metrics">
+    <div class="metric-card">
+      <div class="metric-label">本金</div>
+      <div class="metric-value" id="principal">100万</div>
+      <div class="metric-sub" id="principalDate">2026-03-31 申购</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">持有份额</div>
+      <div class="metric-value" id="shares">0</div>
+      <div class="metric-sub">基金份额</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">累计收益率</div>
+      <div class="metric-value positive" id="totalReturn">+0.00%</div>
+      <div class="metric-sub" id="totalReturnSub">自建仓以来</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">最新净值</div>
+      <div class="metric-value" id="latestNav">1.0000</div>
+      <div class="metric-sub" id="latestNavDate">—</div>
+    </div>
+  </div>
+
+  <!-- 基金历史走势（展示给父母建立信心） -->
+  <div class="card">
+    <div class="card-title">基金近一年走势 <span class="card-subtitle">琰知一号</span></div>
+    <svg class="nav-chart" id="navChart" viewBox="0 0 360 180" preserveAspectRatio="none"></svg>
+    <div class="chart-axis" id="navAxis"></div>
+    <div class="pending-note" id="buyMarker">
+      <strong>⬇ 建仓点：</strong>您在 2026-03-31 以净值 1.2869 买入，正好在这条曲线的末端。
+    </div>
+  </div>
+
+  <!-- 每月赚多少 -->
+  <div class="card">
+    <div class="card-title">基金每月赚多少 <span class="card-subtitle">近12个月</span></div>
+    <svg class="monthly-chart" id="monthlyChart" viewBox="0 0 360 160" preserveAspectRatio="none"></svg>
+    <div class="legend">
+      <span class="legend-item"><span class="legend-dot" style="background:#1d7a3d"></span>盈利月份</span>
+      <span class="legend-item"><span class="legend-dot" style="background:#c54141"></span>回调月份</span>
+    </div>
+  </div>
+
+  <!-- 稳健度 -->
+  <div class="card">
+    <div class="card-title">基金稳健程度</div>
+
+    <div class="risk-item">
+      <div class="risk-top">
+        <span class="risk-name">年化收益率<span class="risk-badge badge-excellent">优秀</span></span>
+        <span class="risk-value" id="annRet">+14.32%</span>
+      </div>
+      <div class="risk-desc">按历史表现折算全年收益，大约相当于放在基金里每年涨 14%。</div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-top">
+        <span class="risk-name">最大亏过多少钱<span class="risk-badge badge-excellent">极小</span></span>
+        <span class="risk-value" id="maxDD">-0.41%</span>
+      </div>
+      <div class="risk-desc">过去运行10个月里，资产从高点回落最多只有这么点，几乎没有亏过。</div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-top">
+        <span class="risk-name">波动幅度<span class="risk-badge badge-excellent">平稳</span></span>
+        <span class="risk-value" id="volatility">2.05%</span>
+      </div>
+      <div class="risk-desc">年化波动仅 2.05%，比银行理财稍波动一些，但涨跌幅度很小，持有体感平稳。</div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-top">
+        <span class="risk-name">赚钱效率 (夏普比率)<span class="risk-badge badge-excellent">顶级</span></span>
+        <span class="risk-value" id="sharpe">7.00</span>
+      </div>
+      <div class="risk-desc">数字越高越好，一般好基金能到 2 就很厉害了，7.00 属于极少见的高效率 —— 风险小而回报稳。</div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-top">
+        <span class="risk-name">月度胜率<span class="risk-badge badge-excellent" id="winBadge">优秀</span></span>
+        <span class="risk-value"><span id="winMonths">0</span>/<span id="totalMonths">0</span></span>
+      </div>
+      <div class="risk-desc">过去每个月里，大部分月份都是赚钱的。</div>
+    </div>
+  </div>
+
+  <!-- 费用结构 -->
+  <div class="card">
+    <div class="card-title">基金费用结构 <span class="card-subtitle">为什么费后收益少了</span></div>
+    <div class="risk-item">
+      <div class="risk-top">
+        <span class="risk-name">管理费</span>
+        <span class="risk-value">1% / 年</span>
+      </div>
+      <div class="risk-desc">按日从基金净值中扣除，公布的净值已经是扣过管理费后的数字。</div>
+    </div>
+    <div class="risk-item">
+      <div class="risk-top">
+        <span class="risk-name">业绩报酬</span>
+        <span class="risk-value">60%</span>
+      </div>
+      <div class="risk-desc">
+        <strong>规则（按招募说明书原文）：</strong><br>
+        当期间年化收益率大于 <strong>6%</strong> 时，对所有收益按 <strong>60%</strong> 收取业绩报酬，<strong>且计提后该笔份额的期间年化收益率不低于 6%（保底）</strong>。<br><br>
+        通俗讲：基金公司拿所有收益的六成，但<strong>扣完费后您的年化收益保证不低于 6%</strong>——两个规则同时生效，取对您更有利的。<br><br>
+        结算时点：每季度末最后一个工作日（3/6/9/12月）
+      </div>
+    </div>
+    <div class="risk-item" id="feeEstimate"></div>
+  </div>
+
+  <!-- 基金信息 -->
+  <div class="card">
+    <div class="card-title">基金基本信息</div>
+    <div class="info-row"><span class="info-label">产品名称</span><span class="info-value" id="infoProduct">—</span></div>
+    <div class="info-row"><span class="info-label">基金代码</span><span class="info-value" id="infoCode">—</span></div>
+    <div class="info-row"><span class="info-label">管理人</span><span class="info-value" id="infoManager">—</span></div>
+    <div class="info-row"><span class="info-label">托管人</span><span class="info-value" id="infoCustodian">—</span></div>
+    <div class="info-row"><span class="info-label">份额登记</span><span class="info-value" id="infoRegistrar">—</span></div>
+    <div class="info-row"><span class="info-label">基金经理</span><span class="info-value" id="infoFM">—</span></div>
+    <div class="info-row"><span class="info-label">策略类型</span><span class="info-value">量化短周期·低波中性</span></div>
+    <div class="info-row"><span class="info-label">投资人</span><span class="info-value" id="infoInvestor">—</span></div>
+  </div>
+
+  <div class="footer-note">
+    <strong>温馨提示：</strong>青琰琰知一号是一只<strong>低波动量化基金</strong>，运行一年以来年化 14%、回撤极小，目前基金总规模 46 亿元，运作稳健。净值每周三由基金公司公布一次，孩子会为您定期更新此报告。
+  </div>
+
+  <div class="footer-meta">
+    数据截至 <span id="metaDate">—</span> · <span class="brand">孩子为您整理</span><br>
+    本报告仅供家庭内部了解资产情况使用，投资有风险
+  </div>
+
+</div>
+
+<script>
+(function render() {
+  const fmtMoney = n => n >= 10000 ? (n/10000).toFixed(2) + '万' : n.toFixed(0);
+  const fmtFullMoney = n => Math.round(n).toLocaleString('zh-CN');
+  const fmtShares = n => n.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const fmtPct = n => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+  const daysBetween = (d1, d2) => Math.round((new Date(d2) - new Date(d1)) / 86400000);
+  const chDate = d => { const [y,m,day]=d.split('-'); return y+'年'+m+'月'+day+'日'; };
+
+  // 个人最新净值（如果没更新过就是建仓净值）
+  const pn = CONFIG.personalNav;
+  const latest = pn[pn.length - 1];
+  const hasUpdate = pn.length > 1;
+
+  const currentValue = CONFIG.shares * latest.nav;
+  const profit = currentValue - CONFIG.initialAmount;
+  const totalReturn = (latest.nav / CONFIG.initialNAV - 1) * 100;
+  const days = daysBetween(CONFIG.initialDate, latest.date);
+  const annualReturnCalc = days > 0 ? (Math.pow(latest.nav / CONFIG.initialNAV, 365/days) - 1) * 100 : 0;
+
+  // 业绩报酬计算（依据 PPT 第28页原文，两条规则同时生效）：
+  // ① 年化 > 6% 时，对所有收益按 60% 收取
+  // ② 且计提后投资者的年化收益不低于 6%（保底）
+  // 两条规则取交集 → 实际扣费额 = min(60%×收益, 收益 - 6%年化对应盈利)
+  function calcPerfFee(profit, principal, days) {
+    if (profit <= 0 || days <= 0) return 0;
+    const hurdleProfit = principal * CONFIG.fees.perfFeeHurdleRate * days / 365;
+    if (profit <= hurdleProfit) return 0;              // 年化不到 6%，不收
+    const feeBy60pct = profit * CONFIG.fees.perfFeeRate;  // 规则①
+    const feeByFloor = profit - hurdleProfit;              // 规则②（保底 6%）
+    return Math.min(feeBy60pct, feeByFloor);  // 两条都满足
+  }
+  const perfFee = calcPerfFee(profit, CONFIG.initialAmount, days);
+  const netProfit = profit - perfFee;
+  const netValue = CONFIG.initialAmount + netProfit;
+  const netReturn = (netProfit / CONFIG.initialAmount) * 100;
+  const netAnnualReturn = days > 0 ? (Math.pow(netValue / CONFIG.initialAmount, 365/days) - 1) * 100 : 0;
+
+  document.getElementById('greeting').textContent = CONFIG.parentGreeting + '好：';
+  document.getElementById('reportDate').textContent = '—— 截至 ' + chDate(latest.date);
+
+  document.getElementById('currentValue').textContent = fmtFullMoney(currentValue);
+  document.getElementById('principal').textContent = fmtMoney(CONFIG.initialAmount);
+  document.getElementById('principalDate').textContent = CONFIG.initialDate + ' 申购';
+  document.getElementById('shares').textContent = fmtShares(CONFIG.shares);
+
+  document.getElementById('latestNav').textContent = latest.nav.toFixed(4);
+  document.getElementById('latestNavDate').textContent = latest.date;
+  document.getElementById('metaDate').textContent = latest.date;
+
+  // 收益情况
+  const heroProfit = document.getElementById('heroProfit');
+  const afterFeeEl = document.getElementById('afterFee');
+  const totalReturnEl = document.getElementById('totalReturn');
+  const totalReturnSubEl = document.getElementById('totalReturnSub');
+  if (hasUpdate) {
+    if (profit > 0) {
+      heroProfit.innerHTML = `
+        <span class="profit-pill gain">
+          <span class="arrow">▲</span> 账面盈利 ${fmtFullMoney(profit)} 元
+        </span>
+        <span class="profit-text">共 ${days} 天 · 年化 ${fmtPct(annualReturnCalc)}</span>`;
+    } else if (profit < 0) {
+      heroProfit.innerHTML = `
+        <span class="profit-pill flat">暂浮动 ${fmtFullMoney(profit)} 元</span>
+        <span class="profit-text">共 ${days} 天</span>`;
+    } else {
+      heroProfit.innerHTML = `
+        <span class="profit-pill flat">与本金持平</span>
+        <span class="profit-text">共 ${days} 天</span>`;
+    }
+    // 费后资产
+    if (perfFee > 0) {
+      afterFeeEl.innerHTML = `
+        <div class="af-label">▼ 扣除业绩报酬后（实际到手）</div>
+        <div class="after-fee-row">
+          <span>${fmtFullMoney(netValue)} 元</span>
+          <span class="af-value">+${fmtFullMoney(netProfit)} 元 (${fmtPct(netReturn)})</span>
+        </div>
+        <div class="af-label" style="margin-top:4px;font-size:11px;color:#8a9ab1;">预估业绩报酬 ${fmtFullMoney(perfFee)} 元（年化保底 6%）</div>`;
+    } else if (profit > 0) {
+      afterFeeEl.innerHTML = `
+        <div class="af-label">年化 ≤ 6%，暂无业绩报酬，账面即为实际收益</div>`;
+    } else {
+      afterFeeEl.innerHTML = '';
+    }
+    totalReturnEl.textContent = fmtPct(totalReturn);
+    totalReturnEl.className = 'metric-value ' + (totalReturn >= 0 ? 'positive' : '');
+    totalReturnSubEl.textContent = '账面毛收益率';
+  } else {
+    heroProfit.innerHTML = `
+      <span class="profit-pill flat">刚建仓 ${days} 天，待净值更新</span>`;
+    afterFeeEl.innerHTML = '';
+    totalReturnEl.textContent = '待更新';
+    totalReturnEl.className = 'metric-value muted';
+    totalReturnSubEl.textContent = '下次净值公布后显示';
+  }
+
+  // 费用预估
+  const feeEstimateEl = document.getElementById('feeEstimate');
+  if (feeEstimateEl) {
+    if (hasUpdate && perfFee > 0) {
+      feeEstimateEl.innerHTML = `
+        <div class="risk-top">
+          <span class="risk-name" style="color:#c54141;">⇩ 当前预估扣费</span>
+          <span class="risk-value" style="color:#c54141;">-${fmtFullMoney(perfFee)} 元</span>
+        </div>
+        <div class="risk-desc">
+          按您已持有 ${days} 天、年化 ${annualReturnCalc.toFixed(2)}% 计算：若此刻结算，业绩报酬约 <strong>${fmtFullMoney(perfFee)} 元</strong>，
+          您实际到手 <strong style="color:#1d7a3d;">${fmtFullMoney(netProfit)} 元</strong>（年化 ${netAnnualReturn.toFixed(2)}%）。<br>
+          <span style="color:#8a9ab1;">注：业绩报酬在每季度末计提，在此之前净值未扣此项，账面数字会显得更高。</span>
+        </div>`;
+    } else if (hasUpdate && profit > 0) {
+      feeEstimateEl.innerHTML = `
+        <div class="risk-desc" style="color:#1d7a3d;">
+          当前年化 ${annualReturnCalc.toFixed(2)}%，未超过 6% 门槛，<strong>无业绩报酬</strong>，账面即为实际到手。
+        </div>`;
+    } else {
+      feeEstimateEl.innerHTML = `<div class="risk-desc">净值更新后将显示费用估算。</div>`;
+    }
+  }
+
+  // 基金信息
+  document.getElementById('infoProduct').textContent = CONFIG.productShort;
+  document.getElementById('infoCode').textContent = CONFIG.fundCode;
+  document.getElementById('infoManager').textContent = CONFIG.manager;
+  document.getElementById('infoCustodian').textContent = CONFIG.custodian;
+  document.getElementById('infoRegistrar').textContent = CONFIG.registrar;
+  document.getElementById('infoFM').textContent = CONFIG.fundManager;
+  document.getElementById('infoInvestor').textContent = CONFIG.investorName;
+
+  // 风险指标
+  document.getElementById('annRet').textContent = '+' + CONFIG.annualizedReturn.toFixed(2) + '%';
+  document.getElementById('maxDD').textContent = CONFIG.maxDrawdown.toFixed(2) + '%';
+  document.getElementById('volatility').textContent = CONFIG.annualVolatility.toFixed(2) + '%';
+  document.getElementById('sharpe').textContent = CONFIG.sharpeRatio.toFixed(2);
+
+  // 用基金历史+个人净值合并绘制曲线
+  const fullHistory = [...CONFIG.fundHistory];
+  // 若有 personalNav 新点，追加到曲线末尾
+  if (hasUpdate) {
+    pn.slice(1).forEach(p => {
+      if (!fullHistory.find(h => h.date === p.date)) fullHistory.push(p);
+    });
+  }
+  drawNav(fullHistory, CONFIG.initialDate);
+
+  // 月度收益
+  const monthly = [];
+  for (let i = 1; i < fullHistory.length; i++) {
+    monthly.push({
+      month: fullHistory[i].date.slice(0,7),
+      ret: (fullHistory[i].nav / fullHistory[i-1].nav - 1) * 100
+    });
+  }
+  drawMonthly(monthly);
+
+  // 胜率
+  const win = monthly.filter(m => m.ret > 0).length;
+  document.getElementById('winMonths').textContent = win;
+  document.getElementById('totalMonths').textContent = monthly.length;
+
+  function drawNav(data, buyDate) {
+    const svg = document.getElementById('navChart');
+    const W = 360, H = 180, pad = 28;
+    const navs = data.map(d => d.nav);
+    const min = Math.min(...navs) - 0.01;
+    const max = Math.max(...navs) + 0.01;
+    const range = max - min;
+    const n = data.length;
+
+    let grid = '';
+    for (let i = 1; i <= 3; i++) {
+      const y = pad + (H - 2*pad) * i / 4;
+      grid += `<line x1="${pad}" y1="${y}" x2="${W-pad/2}" y2="${y}" stroke="#eef1f5" stroke-width="1"/>`;
+    }
+    const pts = data.map((d, i) => [
+      pad + (W-pad-pad/2) * i / (n-1),
+      pad + (H-2*pad) * (1 - (d.nav - min) / range)
+    ]);
+    const pathD = pts.map((p,i) => (i===0?'M':'L')+p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+    const areaD = pathD + ` L${pts[n-1][0].toFixed(1)},${H-pad} L${pts[0][0].toFixed(1)},${H-pad} Z`;
+
+    let yLabels = '';
+    for (let i = 0; i <= 4; i++) {
+      const y = pad + (H-2*pad) * i / 4;
+      const v = (max - range * i / 4).toFixed(3);
+      yLabels += `<text x="${pad-4}" y="${y+3}" text-anchor="end" font-size="9" fill="#aaa">${v}</text>`;
+    }
+
+    // 标记建仓点
+    let buyMarker = '';
+    const buyIdx = data.findIndex(d => d.date === buyDate);
+    if (buyIdx >= 0) {
+      const bp = pts[buyIdx];
+      buyMarker = `
+        <line x1="${bp[0]}" y1="${pad}" x2="${bp[0]}" y2="${H-pad}" stroke="#d4a017" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>
+        <circle cx="${bp[0]}" cy="${bp[1]}" r="5" fill="#d4a017" stroke="#fff" stroke-width="2"/>
+        <text x="${bp[0]}" y="${pad-4}" text-anchor="middle" font-size="10" fill="#d4a017" font-weight="bold">建仓</text>
+      `;
+    }
+
+    const last = pts[n-1];
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="navGrad" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#1a3668" stop-opacity="0.22"/>
+          <stop offset="100%" stop-color="#1a3668" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      ${grid}${yLabels}
+      <path d="${areaD}" fill="url(#navGrad)"/>
+      <path d="${pathD}" fill="none" stroke="#1a3668" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      ${buyMarker}
+      <circle cx="${last[0]}" cy="${last[1]}" r="4.5" fill="#1d7a3d" stroke="#fff" stroke-width="2"/>
+      <text x="${last[0]}" y="${last[1]-10}" text-anchor="middle" font-size="11" fill="#1a3668" font-weight="bold">${data[n-1].nav.toFixed(4)}</text>
+    `;
+
+    document.getElementById('navAxis').innerHTML = `
+      <span>${data[0].date.slice(0,7)}</span>
+      <span>${data[Math.floor(n/2)].date.slice(0,7)}</span>
+      <span>${data[n-1].date.slice(0,7)}</span>`;
+  }
+
+  function drawMonthly(data) {
+    const svg = document.getElementById('monthlyChart');
+    const W = 360, H = 160, padTop = 16, padBot = 30, padLR = 10;
+    const n = data.length;
+    const maxAbs = Math.max(...data.map(d => Math.abs(d.ret)), 0.5);
+    const step = (W - 2*padLR) / n;
+    const barW = step * 0.72;
+    const innerH = H - padTop - padBot;
+    const baseY = padTop + innerH * 0.85;
+
+    let bars = '', labels = '';
+    data.forEach((d, i) => {
+      const x = padLR + step*i + step*0.14;
+      const h = Math.max(2, (Math.abs(d.ret)/maxAbs) * (innerH*0.78));
+      const y = d.ret >= 0 ? baseY - h : baseY;
+      const color = d.ret > 0 ? '#1d7a3d' : (d.ret < 0 ? '#c54141' : '#d4a017');
+      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" rx="2"/>`;
+      if (i === 0 || i === n-1 || i % Math.ceil(n/5) === 0) {
+        labels += `<text x="${(x+barW/2).toFixed(1)}" y="${H-10}" text-anchor="middle" font-size="9" fill="#888">${d.month.slice(2)}</text>`;
+      }
+      if (Math.abs(d.ret) >= maxAbs * 0.9) {
+        labels += `<text x="${(x+barW/2).toFixed(1)}" y="${(y-3).toFixed(1)}" text-anchor="middle" font-size="9" fill="${color}" font-weight="bold">${d.ret.toFixed(1)}%</text>`;
+      }
+    });
+    svg.innerHTML = `<line x1="${padLR}" y1="${baseY}" x2="${W-padLR}" y2="${baseY}" stroke="#e5e7ef" stroke-width="1"/>${bars}${labels}`;
+  }
+})();
+</script>
+
+</body>
+</html>
