@@ -106,26 +106,57 @@ def extract_body(msg):
 
 
 def parse_nav(raw_bytes):
-    """从原始邮件字节解析 { date, nav }；匹配不到返回 None"""
+    """从原始邮件字节解析 { date, nav }；匹配不到返回 None
+
+    支持三种邮件来源：
+    - 原始邮件（Auto-Disclosure@citics.com）
+    - 英文 "Fw:" / "Fwd:" 转发
+    - 163/网易/QQ 中文 "转发：" 转发
+    正文可能有 Markdown 竖线表格，也可能是空格/tab 分隔，均尝试匹配
+    """
     msg = email.message_from_bytes(raw_bytes)
     subject = decode_subject(msg.get('Subject', ''))
 
+    # 主题关键词匹配（包括中英文转发前缀）
     if ('SXR047' not in subject) and ('琰知' not in subject) and ('基金净值' not in subject):
         return None
 
     body = extract_body(msg)
-    # 典型正文：| SXR047(A级) | 青琰琰知一号... | 2026-04-22 | 1.2966 | 1.3456 | ...
+    if not body:
+        return None
+
+    # 模式①：Markdown 表格格式 `| SXR047(A级) | 青琰... | 2026-04-22 | 1.2966 |`
     m = re.search(
         r'SXR047[^|\n]*\|[^|\n]*\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*([\d.]+)',
-        body,
-        re.MULTILINE
+        body
     )
+    # 模式②：同一行空格/tab 分隔 `SXR047(A级)   青琰...   2026-04-22   1.2966`
+    if not m:
+        m = re.search(
+            r'SXR047[^\n]*?(\d{4}-\d{2}-\d{2})\s+([\d.]+)',
+            body
+        )
+    # 模式③：兜底 —— 在整个正文里找任意日期后紧跟的 1.xxxx 形式数字
+    #       （适用于被转发后格式被重排的情况）
+    if not m:
+        date_match = re.search(r'(\d{4}-\d{2}-\d{2})', body)
+        # 匹配范围在 0.5 - 5 之间的 4 位小数数字（典型净值区间）
+        nav_match = re.search(r'(?<![\d.])((?:0\.[5-9]|[1-4]\.)\d{3,4})(?![\d])', body)
+        if date_match and nav_match:
+            class _M: pass
+            m = _M()
+            m.group = lambda i: [None, date_match.group(1), nav_match.group(1)][i]
+
     if m:
         return {
             'date': m.group(1),
             'nav': float(m.group(2)),
             'subject': subject,
         }
+
+    # 解析失败时打印部分正文便于调试
+    log.warning(f'📧 "{subject[:50]}" 主题匹配但正文解析失败，正文前 300 字：')
+    log.warning(body[:300].replace('\n', ' ⏎ '))
     return None
 
 
@@ -216,10 +247,19 @@ def main():
                 client.select_folder('INBOX')
                 log.info('🔐 已登录 Gmail')
 
-                # 处理启动时的未读【基金净值】邮件
-                missed = client.search(['UNSEEN', 'SUBJECT', 'SXR047'])
+                # 启动时：扫描近 3 天所有与净值相关的邮件（不限已读/未读）
+                # 这样即使之前被 Gmail 过滤器标为已读，也会被 monitor 看到
+                # parse_nav 内部已做 date 去重（update_html 会跳过已有日期）
+                import datetime as _dt
+                since = (_dt.date.today() - _dt.timedelta(days=3)).strftime('%d-%b-%Y')
+                missed = (
+                    client.search(['SINCE', since, 'SUBJECT', 'SXR047']) +
+                    client.search(['SINCE', since, 'SUBJECT', '琰知']) +
+                    client.search(['SINCE', since, 'SUBJECT', '基金净值'])
+                )
+                missed = list(set(missed))  # 去重
                 if missed:
-                    log.info(f'📥 发现 {len(missed)} 封未读净值邮件，逐一处理')
+                    log.info(f'📥 启动扫描近 3 天发现 {len(missed)} 封候选净值邮件，逐一检查')
                     for uid in missed:
                         process_uid(client, uid)
 
@@ -233,8 +273,15 @@ def main():
 
                     if responses:
                         log.info(f'🔔 收到 IMAP 通知: {len(responses)} 个事件')
-                        # 查找新的未读净值邮件
-                        new_uids = client.search(['UNSEEN', 'SUBJECT', 'SXR047'])
+                        # 收到通知后：扫描近 1 天所有净值相关邮件（不限已读/未读）
+                        # 避免 Gmail 过滤器自动标记已读导致 UNSEEN 漏掉
+                        import datetime as _dt
+                        since = (_dt.date.today() - _dt.timedelta(days=1)).strftime('%d-%b-%Y')
+                        new_uids = list(set(
+                            client.search(['SINCE', since, 'SUBJECT', 'SXR047']) +
+                            client.search(['SINCE', since, 'SUBJECT', '琰知']) +
+                            client.search(['SINCE', since, 'SUBJECT', '基金净值'])
+                        ))
                         for uid in new_uids:
                             process_uid(client, uid)
                     else:
