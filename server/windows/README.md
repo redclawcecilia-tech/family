@@ -168,33 +168,67 @@ Get-Content C:\family\logs\monitor.log -Wait -Tail 20
 
 ---
 
-## 六、日常操作
+## 六、装 web.py 成 Windows 服务（让父母能访问报告）
+
+monitor.py 负责更新数据，web.py 负责对外 serve 报告网页。两个服务独立运行，互不干扰。
+
+**管理员 PowerShell：**
 
 ```powershell
-# 查看服务状态
-Get-Service FamilyFundMonitor
+cd C:\family
 
-# 重启服务（比如改了 config.env 后）
+# 用 NSSM 安装 web 服务
+.\nssm.exe install FamilyFundWeb python C:\family\server\web.py
+.\nssm.exe set FamilyFundWeb AppDirectory C:\family
+.\nssm.exe set FamilyFundWeb AppStdout C:\family\logs\web.log
+.\nssm.exe set FamilyFundWeb AppStderr C:\family\logs\web.err.log
+.\nssm.exe set FamilyFundWeb AppRestartDelay 5000
+
+# 启动
+.\nssm.exe start FamilyFundWeb
+
+# 放通 Windows 防火墙 8080 端口（一次即可）
+New-NetFirewallRule -DisplayName "FamilyFund Web 8080" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow
+
+# 验证
+Get-Service FamilyFundWeb              # Status: Running
+netstat -an | findstr 8080             # 应见 0.0.0.0:8080 LISTENING
+curl http://127.0.0.1:8080/ -UseBasicParsing | Select-Object StatusCode  # 200
+```
+
+**云控制台防火墙：** 方舟云（或阿里/腾讯云）控制台 → 安全组 → 入方向放通 TCP **8080**，源 `0.0.0.0/0`。
+
+**对外验证：** 在另一台设备（手机/家里电脑）浏览器打开 `http://<服务器公网IP>:8080/` 看到报告即可。
+
+---
+
+## 七、日常操作
+
+```powershell
+# 查看两个服务的状态
+Get-Service FamilyFundMonitor, FamilyFundWeb
+
+# 重启 monitor（比如改了 config.env 或代码后）
 Restart-Service FamilyFundMonitor
 
-# 停止服务
-Stop-Service FamilyFundMonitor
-
-# 启动服务
-Start-Service FamilyFundMonitor
+# 重启 web
+Restart-Service FamilyFundWeb
 
 # 看最新日志
 Get-Content C:\family\logs\monitor.log -Tail 50
+Get-Content C:\family\logs\web.log -Tail 50
 ```
 
 ---
 
-## 七、卸载（不用了再删）
+## 八、卸载（不用了再删）
 
 ```powershell
 # 管理员 PowerShell
 .\nssm.exe stop FamilyFundMonitor
 .\nssm.exe remove FamilyFundMonitor confirm
+.\nssm.exe stop FamilyFundWeb
+.\nssm.exe remove FamilyFundWeb confirm
 
 # 顺便把 Gmail App Password 到 https://myaccount.google.com/apppasswords 撤销
 ```
