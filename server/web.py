@@ -350,16 +350,35 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_refresh(self):
         log.info('📥 收到手动刷新请求')
 
-        # 1) 拿到结果（_do_refresh 内部已 try/except，但兜底再保险一层）
-        try:
-            result = _do_refresh()
-            if not isinstance(result, dict):
-                result = {'ok': False,
-                          'error': f'内部错误：_do_refresh 返回非 dict ({type(result).__name__})'}
-        except BaseException as e:
-            log.exception('_do_refresh 抛出未捕获异常')
+        # 1) 拿到结果——挂线程跑 _do_refresh，墙钟超时 15s。
+        #    （IMAPClient 的 timeout 只覆盖单个 socket 读，多步操作累加可能 >60s）
+        import threading
+        _holder = {'result': None}
+
+        def _runner():
+            try:
+                r = _do_refresh()
+                if not isinstance(r, dict):
+                    r = {'ok': False,
+                         'error': f'内部错误：_do_refresh 返回非 dict ({type(r).__name__})'}
+                _holder['result'] = r
+            except BaseException as e:
+                log.exception('_do_refresh 抛出未捕获异常')
+                _holder['result'] = {'ok': False,
+                                     'error': f'刷新失败 [{type(e).__name__}] {e}'}
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        t.join(timeout=15)
+
+        if t.is_alive():
+            log.warning('_do_refresh 在 15 秒内未返回（IMAP 卡住）')
             result = {'ok': False,
-                      'error': f'刷新失败 [{type(e).__name__}] {e}'}
+                      'error': '刷新超时（>15s）—— IMAP 服务器无响应。可能 imap.163.com 出站不通、163 授权码失效、或网络抖动。请到服务器看 logs/web.log。'}
+        else:
+            result = _holder['result']
+            if result is None:
+                result = {'ok': False, 'error': '内部错误：_do_refresh 返回 None'}
 
         # 2) 序列化（理论上不会失败，但仍然兜底）
         try:
@@ -379,6 +398,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Refresh-Version', '2')  # bump on each /api/refresh patch
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
