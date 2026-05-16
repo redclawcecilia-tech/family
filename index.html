@@ -75,7 +75,8 @@ const CONFIG = {
   intervalReturn: 11.38,
   fundInceptionDate: "2025-04-21",
 
-  // 【费率结构】（琰知一号 PPT 第28页）
+  // 【API 地址】从 Cloudflare 访问时填服务器地址，本地访问留空
+  apiBase: "http://118.196.102.49:8080",
   fees: {
     managementFeeAnnual: 0.01,        // 管理费 1%/年（已在每日净值中扣除，无需单独计算）
     subscriptionFee: 0.00,            // 申购费 1% 可免 —— 按0处理
@@ -438,6 +439,20 @@ const CONFIG = {
     <strong>温馨提示：</strong>青琰琰知一号是一只<strong>低波动量化基金</strong>，运行一年以来年化 14%、回撤极小，目前基金总规模 46 亿元，运作稳健。净值每周三由基金公司公布一次，孩子会为您定期更新此报告。
   </div>
 
+  <div style="text-align:center; margin:20px 16px 0;">
+    <button id="refreshBtn" onclick="doRefresh()" style="
+      display:inline-flex; align-items:center; gap:6px;
+      padding:12px 32px; border:none; border-radius:24px;
+      background:linear-gradient(135deg,#1a3668,#2a4f8c);
+      color:#fff; font-size:16px; font-weight:600;
+      cursor:pointer; box-shadow:0 4px 14px rgba(26,54,104,0.25);
+      transition:all .2s;
+    ">
+      <span id="refreshIcon">🔄</span> 更新
+    </button>
+    <div id="refreshMsg" style="margin-top:10px; font-size:13px; color:#888; min-height:20px;"></div>
+  </div>
+
   <div class="footer-meta">
     数据截至 <span id="metaDate">—</span> · <span class="brand">孩子为您整理</span><br>
     本报告仅供家庭内部了解资产情况使用，投资有风险
@@ -695,6 +710,43 @@ const CONFIG = {
     });
     svg.innerHTML = `<line x1="${padLR}" y1="${baseY}" x2="${W-padLR}" y2="${baseY}" stroke="#e5e7ef" stroke-width="1"/>${bars}${labels}`;
   }
+
+  window.doRefresh = async function() {
+    const btn = document.getElementById('refreshBtn');
+    const icon = document.getElementById('refreshIcon');
+    const msg = document.getElementById('refreshMsg');
+    const apiBase = CONFIG.apiBase || '';
+    btn.disabled = true;
+    btn.style.opacity = '0.7';
+    icon.textContent = '⏳';
+    msg.textContent = '正在从邮箱获取最新净值...';
+    msg.style.color = '#888';
+    try {
+      if (location.protocol === 'https:' && apiBase.startsWith('http://')) {
+        throw new Error('HTTPS 页面不能直连 HTTP 更新接口，请打开服务器页面更新。');
+      }
+      const resp = await fetch(apiBase + '/api/refresh', { cache: 'no-store' });
+      if (!resp.ok) throw new Error('刷新接口返回 HTTP ' + resp.status);
+      const data = await resp.json();
+      if (data.ok && data.updated) {
+        msg.textContent = '✅ ' + data.message + '  页面即将刷新...';
+        msg.style.color = '#1d7a3d';
+        setTimeout(() => location.reload(), 1500);
+      } else if (data.ok) {
+        msg.textContent = data.message;
+        msg.style.color = '#888';
+      } else {
+        msg.textContent = '❌ ' + (data.error || '未知错误');
+        msg.style.color = '#c54141';
+      }
+    } catch (e) {
+      msg.textContent = '❌ ' + (e && e.message ? e.message : '网络错误，请稍后重试');
+      msg.style.color = '#c54141';
+    }
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    icon.textContent = '🔄';
+  };
 })();
 </script>
 

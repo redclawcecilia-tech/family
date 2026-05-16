@@ -1,5 +1,5 @@
 [Unit]
-Description=Family Fund NAV Monitor (Gmail IMAP IDLE)
+Description=Family Fund NAV Monitor (IMAP IDLE)
 After=network-online.target
 Wants=network-online.target
 

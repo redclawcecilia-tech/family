@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """
 青琰琰知一号 净值事件驱动监听
-- IMAP IDLE 保持与 Gmail 的长连接（非轮询）
-- 【基金净值】邮件一到 Gmail，服务器立刻收到推送
+- IMAP IDLE 保持与邮箱的长连接（非轮询）
+- 网易邮箱不支持 IDLE 时自动回退到轮询模式
+- 【基金净值】邮件一到邮箱，服务器立刻收到推送
 - 解析净值 → 更新 index.html → git commit + push
 - GitHub 触发 Cloudflare Pages 自动重新部署
 
-配置：通过环境变量（见 config.env.example）
+配置：通过环境变量或 config.env（见 config.env.example）
 """
 import os
 import re
 import sys
 import time
+import json
 import email
+import socket
 import logging
+import tempfile
 import subprocess
 from pathlib import Path
 from email.header import decode_header
@@ -25,13 +29,17 @@ except ImportError:
     print('缺少 imapclient 库。请执行：pip install imapclient')
     sys.exit(1)
 
-# Windows 默认没有 CA 证书 bundle，优先用 certifi 的
 import ssl
 try:
     import certifi
     _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 except ImportError:
-    _SSL_CTX = None  # 回退到系统默认
+    _SSL_CTX = None
+
+IMAP_MAX_RETRIES = 3
+IMAP_RETRY_DELAY = 10
+IMAP_CONNECT_TIMEOUT = 30
+IDLE_TIMEOUT = 25 * 60
 
 # ============ 自动加载 config.env（同目录下）============
 _cfg = Path(__file__).resolve().parent / 'config.env'
@@ -42,17 +50,30 @@ if _cfg.exists():
             continue
         _k, _v = _ln.split('=', 1)
         _k = _k.strip()
-        _v = _v.strip().strip('"').strip("'")
+        _v = _v.strip()
+        if len(_v) >= 2 and _v[0] == _v[-1] and _v[0] in ('"', "'"):
+            _v = _v[1:-1]
         os.environ.setdefault(_k, _v)
 
 # ============ 配置 ============
-GMAIL_USER = os.environ['GMAIL_USER']
-GMAIL_APP_PASSWORD = os.environ['GMAIL_APP_PASSWORD'].replace(' ', '')  # 去掉空格
+IMAP_SERVER = os.environ.get('IMAP_SERVER', 'imap.163.com')
+IMAP_PORT = int(os.environ.get('IMAP_PORT', '993') or '993')
+IMAP_USER = os.environ['IMAP_USER']
+IMAP_PASSWORD = os.environ['IMAP_PASSWORD'].replace(' ', '')
 REPO_PATH = Path(os.environ.get('REPO_PATH', Path(__file__).resolve().parent.parent))
 GITHUB_USER = os.environ.get('GITHUB_USER', 'redclawcecilia-tech')
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'family')
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
 HTML_PATH = REPO_PATH / 'index.html'
+
+PROXY_HOST = os.environ.get('IMAP_PROXY_HOST', '') or ''
+PROXY_PORT = int(os.environ.get('IMAP_PROXY_PORT', '0') or '0')
+PROXY_USERNAME = os.environ.get('IMAP_PROXY_USERNAME', '') or ''
+PROXY_PASSWORD = os.environ.get('IMAP_PROXY_PASSWORD', '') or ''
+
+POLL_INTERVAL = int(os.environ.get('POLL_INTERVAL', '60') or '60')
+
+PROCESSED_UIDS_FILE = Path(__file__).resolve().parent / 'processed_uids.json'
 
 # ============ 日志 ============
 logging.basicConfig(
@@ -63,10 +84,33 @@ logging.basicConfig(
 log = logging.getLogger('nav-monitor')
 
 
+# ============ 已处理 UID 追踪 ============
+def _load_processed_uids():
+    if PROCESSED_UIDS_FILE.exists():
+        try:
+            return {str(uid) for uid in json.loads(PROCESSED_UIDS_FILE.read_text(encoding='utf-8'))}
+        except Exception:
+            return set()
+    return set()
+
+
+def _save_processed_uids(uids):
+    try:
+        PROCESSED_UIDS_FILE.write_text(
+            json.dumps(sorted(str(u) for u in uids)), encoding='utf-8')
+    except Exception:
+        pass
+
+
 # ============ 邮件解析 ============
 def decode_subject(raw_subject):
     if not raw_subject:
         return ''
+    if isinstance(raw_subject, bytes):
+        try:
+            raw_subject = raw_subject.decode('utf-8', errors='replace')
+        except Exception:
+            raw_subject = str(raw_subject)
     parts = decode_header(raw_subject)
     result = []
     for text, charset in parts:
@@ -81,7 +125,6 @@ def decode_subject(raw_subject):
 
 
 def extract_body(msg):
-    """从 email.message 提取 text/plain 正文"""
     if msg.is_multipart():
         for part in msg.walk():
             ctype = part.get_content_type()
@@ -106,18 +149,9 @@ def extract_body(msg):
 
 
 def parse_nav(raw_bytes):
-    """从原始邮件字节解析 { date, nav }；匹配不到返回 None
-
-    支持三种邮件来源：
-    - 原始邮件（Auto-Disclosure@citics.com）
-    - 英文 "Fw:" / "Fwd:" 转发
-    - 163/网易/QQ 中文 "转发：" 转发
-    正文可能有 Markdown 竖线表格，也可能是空格/tab 分隔，均尝试匹配
-    """
     msg = email.message_from_bytes(raw_bytes)
     subject = decode_subject(msg.get('Subject', ''))
 
-    # 主题关键词匹配（包括中英文转发前缀）
     if ('SXR047' not in subject) and ('琰知' not in subject) and ('基金净值' not in subject):
         return None
 
@@ -125,23 +159,21 @@ def parse_nav(raw_bytes):
     if not body:
         return None
 
-    # 模式①：Markdown 表格格式 `| SXR047(A级) | 青琰... | 2026-04-22 | 1.2966 |`
     m = re.search(
         r'SXR047[^|\n]*\|[^|\n]*\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*([\d.]+)',
         body
     )
-    # 模式②：同一行空格/tab 分隔 `SXR047(A级)   青琰...   2026-04-22   1.2966`
     if not m:
         m = re.search(
             r'SXR047[^\n]*?(\d{4}-\d{2}-\d{2})\s+([\d.]+)',
             body
         )
-    # 模式③：兜底 —— 在整个正文里找任意日期后紧跟的 1.xxxx 形式数字
-    #       （适用于被转发后格式被重排的情况）
     if not m:
         date_match = re.search(r'(\d{4}-\d{2}-\d{2})', body)
-        # 匹配范围在 0.5 - 5 之间的 4 位小数数字（典型净值区间）
-        nav_match = re.search(r'(?<![\d.])((?:0\.[5-9]|[1-4]\.)\d{3,4})(?![\d])', body)
+        nav_match = re.search(
+            r'(?:净值|NAV|nav|单位净值)[^\d]{0,10}((?:0\.[5-9]|[1-4]\.)\d{3,4})\b',
+            body
+        )
         if date_match and nav_match:
             class _M: pass
             m = _M()
@@ -154,13 +186,12 @@ def parse_nav(raw_bytes):
             'subject': subject,
         }
 
-    # 解析失败时打印部分正文便于调试
     log.warning(f'📧 "{subject[:50]}" 主题匹配但正文解析失败，正文前 300 字：')
     log.warning(body[:300].replace('\n', ' ⏎ '))
     return None
 
 
-# ============ HTML 更新 ============
+# ============ HTML 更新（原子写入）============
 def update_html(date, nav):
     content = HTML_PATH.read_text(encoding='utf-8')
 
@@ -176,30 +207,38 @@ def update_html(date, nav):
             raise ValueError(f'未在 HTML 中找到 {name} 数组')
         body = mm.group(2)
 
-        # 在最后一个对象条目 `}` 的正后方插入逗号（如果还没有）
-        # 这样即使最后一行有行尾注释 `// ...`，逗号也不会落进注释里
-        # 匹配：最后一个 `}` 后面可选的空白+行尾注释，之后到 `]` 之前
         last_brace = re.search(r'\}(?=[ \t]*(//[^\n]*)?\s*$)', body, re.MULTILINE)
         if last_brace:
-            # 检查这个 `}` 正后方（跳过空白）第一个非空白非注释字符是不是逗号
             tail = body[last_brace.end():]
-            # 跳过空白 + 行尾注释
             skipped = re.match(r'[ \t]*(?://[^\n]*)?', tail)
             after = tail[skipped.end() if skipped else 0:].lstrip()
             if not after.startswith(','):
-                # 在 `}` 正后方插逗号，保留原注释
                 insert_pos = last_brace.end()
                 body = body[:insert_pos] + ',' + body[insert_pos:]
 
-        # 追加新条目
         body = body.rstrip() + '\n' + entry + '\n  '
         content = content[:mm.start()] + mm.group(1) + '\n' + body + mm.group(3) + content[mm.end():]
 
     content = re.sub(r'latestDate\s*:\s*["\'][\d-]+["\']',
                      f'latestDate: "{date}"', content)
 
-    HTML_PATH.write_text(content, encoding='utf-8')
+    _atomic_write(HTML_PATH, content)
     return True
+
+
+def _atomic_write(path, content):
+    dir_path = path.parent
+    fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(content)
+        os.replace(tmp_path, str(path))
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        raise
 
 
 # ============ Git 推送 ============
@@ -208,10 +247,11 @@ def git_push(date, nav):
         log.info('$ ' + ' '.join(cmd))
         r = subprocess.run(cmd, cwd=REPO_PATH, capture_output=True, text=True)
         if r.returncode != 0:
-            log.warning(r.stderr.strip())
-        return r.returncode == 0
+            msg = (r.stderr or r.stdout or '').strip()
+            log.error(msg)
+            raise RuntimeError(f'命令失败: {" ".join(cmd)}\n{msg}')
+        return r.stdout.strip()
 
-    # 确保有 git identity
     subprocess.run(['git', 'config', 'user.name', 'family-nav-monitor'],
                    cwd=REPO_PATH, check=False)
     subprocess.run(['git', 'config', 'user.email', 'monitor@localhost'],
@@ -221,15 +261,24 @@ def git_push(date, nav):
     run('git', 'commit', '-m', f'净值自动更新 {date} NAV={nav}')
 
     if GITHUB_TOKEN:
-        remote_url = f'https://{GITHUB_USER}:{GITHUB_TOKEN}@github.com/{GITHUB_USER}/{GITHUB_REPO}.git'
-        subprocess.run(['git', 'push', remote_url, 'HEAD:main'],
-                       cwd=REPO_PATH, check=False)
+        r = subprocess.run(
+            ['git', 'push',
+             f'https://{GITHUB_USER}:{GITHUB_TOKEN}@github.com/{GITHUB_USER}/{GITHUB_REPO}.git',
+             'HEAD:main'],
+            cwd=REPO_PATH, capture_output=True, text=True, check=False)
+        if r.returncode != 0:
+            msg = (r.stderr or r.stdout or '').replace(GITHUB_TOKEN, '***').strip()
+            log.error(msg)
+            raise RuntimeError(f'git push 失败: {msg}')
     else:
         run('git', 'push', 'origin', 'main')
 
 
 # ============ 处理一封邮件 ============
-def process_uid(client, uid):
+def process_uid(client, uid, processed_uids):
+    uid_key = str(uid)
+    if uid_key in processed_uids:
+        return
     try:
         fetched = client.fetch([uid], ['RFC822'])
         if uid not in fetched:
@@ -237,81 +286,196 @@ def process_uid(client, uid):
         raw = fetched[uid][b'RFC822']
         info = parse_nav(raw)
         if not info:
+            processed_uids.add(uid_key)
+            _save_processed_uids(processed_uids)
             return
         log.info(f'🎯 解析到净值 {info["date"]} = {info["nav"]} （主题: {info["subject"][:60]}）')
         if update_html(info['date'], info['nav']):
             git_push(info['date'], info['nav'])
             log.info('✅ 已推送到 GitHub，Cloudflare 约 30-60 秒后部署完成')
+        processed_uids.add(uid_key)
+        _save_processed_uids(processed_uids)
     except Exception:
         log.exception(f'处理 uid={uid} 失败')
+
+
+# ============ IMAP 搜索辅助 ============
+def _imap_since_date(days):
+    import datetime as _dt
+    d = _dt.date.today() - _dt.timedelta(days=days)
+    return d.strftime('%d-%b-%Y')
+
+
+def _search_nav_emails(client, days):
+    since = _imap_since_date(days)
+    nav_keywords = ['SXR047', '琰知', '基金净值']
+    uids = client.search(['SINCE', since])
+    if not uids:
+        return []
+    try:
+        fetched = client.fetch(uids, ['ENVELOPE'])
+    except Exception as e:
+        log.warning(f'ENVELOPE fetch 失败: {e}')
+        return []
+    nav_uids = []
+    for uid in uids:
+        if uid not in fetched:
+            continue
+        env = fetched[uid][b'ENVELOPE']
+        subj_raw = env.subject
+        subj = decode_subject(subj_raw)
+        if any(kw in subj for kw in nav_keywords):
+            nav_uids.append(uid)
+    return nav_uids
+
+
+# ============ 连接 ============
+def _make_proxy_sock(host, port):
+    try:
+        import socks
+        proxy_user = PROXY_USERNAME or None
+        proxy_pass = PROXY_PASSWORD or None
+        s = socks.socksocket()
+        s.set_proxy(socks.SOCKS5, host, port,
+                    username=proxy_user, password=proxy_pass)
+        return s
+    except ImportError:
+        log.warning('PySocks未安装，无法使用代理。请运行: pip install PySocks')
+        return None
+
+
+def _connect_imap():
+    use_proxy = PROXY_HOST and PROXY_PORT
+    if use_proxy:
+        log.info(f'🌐 使用SOCKS5代理: {PROXY_HOST}:{PROXY_PORT}')
+
+    for attempt in range(1, IMAP_MAX_RETRIES + 1):
+        try:
+            log.info(f'📬 连接 {IMAP_SERVER}:{IMAP_PORT} (尝试 {attempt}/{IMAP_MAX_RETRIES})')
+
+            if use_proxy:
+                sock = _make_proxy_sock(PROXY_HOST, PROXY_PORT)
+                if sock:
+                    sock.connect((IMAP_SERVER, IMAP_PORT))
+                    import ssl as _ssl
+                    ssl_ctx = _SSL_CTX or _ssl.create_default_context()
+                    tls_sock = ssl_ctx.wrap_socket(sock, server_hostname=IMAP_SERVER)
+                    client = IMAPClient(IMAP_SERVER, port=IMAP_PORT, ssl=True,
+                                        ssl_context=ssl_ctx, timeout=IMAP_CONNECT_TIMEOUT,
+                                        socket=tls_sock)
+                else:
+                    client = IMAPClient(IMAP_SERVER, port=IMAP_PORT, ssl=True,
+                                        ssl_context=_SSL_CTX, timeout=IMAP_CONNECT_TIMEOUT)
+            else:
+                client = IMAPClient(IMAP_SERVER, port=IMAP_PORT, ssl=True,
+                                    ssl_context=_SSL_CTX, timeout=IMAP_CONNECT_TIMEOUT)
+
+            client.login(IMAP_USER, IMAP_PASSWORD)
+            if '163.com' in IMAP_SERVER or '126.com' in IMAP_SERVER or 'yeah.net' in IMAP_SERVER:
+                client.id_({'name': 'family-fund-monitor', 'version': '1.0', 'vendor': 'local'})
+            log.info(f'🔐 已登录邮箱 {IMAP_USER}')
+            return client
+        except (TimeoutError, socket.timeout, OSError, ConnectionError) as e:
+            log.warning(f'连接尝试 {attempt}/{IMAP_MAX_RETRIES} 失败: {e}')
+            if attempt < IMAP_MAX_RETRIES:
+                time.sleep(IMAP_RETRY_DELAY)
+            else:
+                raise
+        except IMAPClientError as e:
+            log.error(f'邮箱认证失败: {e}')
+            raise
+
+
+def _check_idle_support(client):
+    caps = client.capabilities()
+    if caps and b'IDLE' in caps or (isinstance(caps, (list, tuple)) and 'IDLE' in caps):
+        return True
+    try:
+        cap_list = client.capability()
+        cap_str = ' '.join(str(c) for c in cap_list) if cap_list else ''
+        return 'IDLE' in cap_str.upper()
+    except Exception:
+        return False
 
 
 # ============ 主循环 ============
 def main():
     log.info('=' * 60)
-    log.info(f'📬 启动 Gmail 监听 · 账号: {GMAIL_USER}')
+    log.info(f'📬 启动净值监听 · 邮箱: {IMAP_USER}')
     log.info(f'📁 仓库路径: {REPO_PATH}')
     log.info(f'🔗 GitHub: {GITHUB_USER}/{GITHUB_REPO}')
     log.info('=' * 60)
 
+    processed_uids = _load_processed_uids()
+    log.info(f'📋 已处理邮件记录: {len(processed_uids)} 条')
+
     while True:
+        client = None
         try:
-            with IMAPClient('imap.gmail.com', port=993, ssl=True,
-                            ssl_context=_SSL_CTX) as client:
-                client.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-                client.select_folder('INBOX')
-                log.info('🔐 已登录 Gmail')
+            client = _connect_imap()
+            client.select_folder('INBOX')
 
-                # 启动时：扫描近 3 天所有与净值相关的邮件（不限已读/未读）
-                # 这样即使之前被 Gmail 过滤器标为已读，也会被 monitor 看到
-                # parse_nav 内部已做 date 去重（update_html 会跳过已有日期）
-                import datetime as _dt
-                since = (_dt.date.today() - _dt.timedelta(days=3)).strftime('%d-%b-%Y')
-                missed = (
-                    client.search(['SINCE', since, 'SUBJECT', 'SXR047']) +
-                    client.search(['SINCE', since, 'SUBJECT', '琰知']) +
-                    client.search(['SINCE', since, 'SUBJECT', '基金净值'])
-                )
-                missed = list(set(missed))  # 去重
-                if missed:
-                    log.info(f'📥 启动扫描近 3 天发现 {len(missed)} 封候选净值邮件，逐一检查')
-                    for uid in missed:
-                        process_uid(client, uid)
+            missed = _search_nav_emails(client, 3)
+            new_missed = [u for u in missed if str(u) not in processed_uids]
+            if new_missed:
+                log.info(f'📥 启动扫描近 3 天发现 {len(new_missed)} 封未处理候选邮件')
+                for uid in new_missed:
+                    process_uid(client, uid, processed_uids)
 
-                # 进入 IDLE 模式 —— 事件驱动，非轮询
+            use_idle = _check_idle_support(client)
+            if use_idle:
+                log.info('👂 服务器支持 IDLE，使用事件驱动模式')
                 while True:
-                    client.idle()
-                    log.info('👂 IDLE 等待新邮件...')
-                    # IMAP IDLE 最多维持 29 分钟，Google 建议 ≤ 30 分钟，取 25 分钟保守
-                    responses = client.idle_check(timeout=25 * 60)
-                    client.idle_done()
+                    try:
+                        client.idle()
+                        log.info('👂 IDLE 等待新邮件...')
+                        responses = client.idle_check(timeout=IDLE_TIMEOUT)
+                        client.idle_done()
+                    except IMAPClientError as e:
+                        log.warning(f'IDLE 错误: {e}，退出IDLE循环重连')
+                        break
 
                     if responses:
                         log.info(f'🔔 收到 IMAP 通知: {len(responses)} 个事件')
-                        # 收到通知后：扫描近 1 天所有净值相关邮件（不限已读/未读）
-                        # 避免 Gmail 过滤器自动标记已读导致 UNSEEN 漏掉
-                        import datetime as _dt
-                        since = (_dt.date.today() - _dt.timedelta(days=1)).strftime('%d-%b-%Y')
-                        new_uids = list(set(
-                            client.search(['SINCE', since, 'SUBJECT', 'SXR047']) +
-                            client.search(['SINCE', since, 'SUBJECT', '琰知']) +
-                            client.search(['SINCE', since, 'SUBJECT', '基金净值'])
-                        ))
+                        new_uids = _search_nav_emails(client, 1)
                         for uid in new_uids:
-                            process_uid(client, uid)
+                            process_uid(client, uid, processed_uids)
                     else:
                         log.info('⏱ IDLE 超时，重连...')
-                        break  # 跳出 IDLE 循环，重新登录（避免僵尸连接）
+                        break
+            else:
+                log.info(f'🔄 服务器不支持 IDLE，使用轮询模式（间隔 {POLL_INTERVAL} 秒）')
+                while True:
+                    time.sleep(POLL_INTERVAL)
+                    try:
+                        new_uids = _search_nav_emails(client, 1)
+                        new_only = [u for u in new_uids if str(u) not in processed_uids]
+                        if new_only:
+                            log.info(f'🔔 轮询发现 {len(new_only)} 封新邮件')
+                            for uid in new_only:
+                                process_uid(client, uid, processed_uids)
+                    except IMAPClientError as e:
+                        log.warning(f'轮询查询失败: {e}，重连')
+                        break
 
         except IMAPClientError as e:
             log.warning(f'IMAP 错误: {e}，30 秒后重连')
             time.sleep(30)
+        except (TimeoutError, socket.timeout) as e:
+            log.error(f'连接超时: {e}，60 秒后重连')
+            time.sleep(60)
         except KeyboardInterrupt:
             log.info('手动停止')
             break
         except Exception:
             log.exception('意外错误，60 秒后重连')
             time.sleep(60)
+        finally:
+            if client:
+                try:
+                    client.logout()
+                except Exception:
+                    pass
 
 
 if __name__ == '__main__':

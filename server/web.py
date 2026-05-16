@@ -181,6 +181,14 @@ def _update_html(date, nav):
     return True
 
 
+def _run_git(*cmd):
+    r = subprocess.run(cmd, cwd=REPO_PATH, capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or '').strip()
+        raise RuntimeError(f'命令失败: {" ".join(cmd)}\n{msg}')
+    return r.stdout.strip()
+
+
 def _do_refresh():
     if not IMAP_USER or not IMAP_PASSWORD:
         return {'ok': False, 'error': 'IMAP_USER 或 IMAP_PASSWORD 未配置'}
@@ -262,29 +270,24 @@ def _do_refresh():
         updated = _update_html(latest['date'], latest['nav'])
 
         if updated:
-            try:
-                subprocess.run(['git', 'config', 'user.name', 'family-nav-monitor'],
-                               cwd=REPO_PATH, check=False, capture_output=True)
-                subprocess.run(['git', 'config', 'user.email', 'monitor@localhost'],
-                               cwd=REPO_PATH, check=False, capture_output=True)
-                subprocess.run(['git', 'add', 'index.html'],
-                               cwd=REPO_PATH, check=False, capture_output=True)
-                subprocess.run(['git', 'commit', '-m', f'净值手动更新 {latest["date"]} NAV={latest["nav"]}'],
-                               cwd=REPO_PATH, check=False, capture_output=True)
-                github_token = os.environ.get('GITHUB_TOKEN', '')
-                github_user = os.environ.get('GITHUB_USER', 'redclawcecilia-tech')
-                github_repo = os.environ.get('GITHUB_REPO', 'family')
-                if github_token:
-                    subprocess.run(
-                        ['git', 'push',
-                         f'https://{github_user}:{github_token}@github.com/{github_user}/{github_repo}.git',
-                         'HEAD:main'],
-                        cwd=REPO_PATH, capture_output=True, text=True, check=False)
-                else:
-                    subprocess.run(['git', 'push', 'origin', 'main'],
-                                   cwd=REPO_PATH, capture_output=True, check=False)
-            except Exception:
-                pass
+            _run_git('git', 'config', 'user.name', 'family-nav-monitor')
+            _run_git('git', 'config', 'user.email', 'monitor@localhost')
+            _run_git('git', 'add', 'index.html')
+            _run_git('git', 'commit', '-m', f'净值手动更新 {latest["date"]} NAV={latest["nav"]}')
+            github_token = os.environ.get('GITHUB_TOKEN', '')
+            github_user = os.environ.get('GITHUB_USER', 'redclawcecilia-tech')
+            github_repo = os.environ.get('GITHUB_REPO', 'family')
+            if github_token:
+                r = subprocess.run(
+                    ['git', 'push',
+                     f'https://{github_user}:{github_token}@github.com/{github_user}/{github_repo}.git',
+                     'HEAD:main'],
+                    cwd=REPO_PATH, capture_output=True, text=True, check=False)
+                if r.returncode != 0:
+                    msg = (r.stderr or r.stdout or '').replace(github_token, '***').strip()
+                    raise RuntimeError(f'git push 失败: {msg}')
+            else:
+                _run_git('git', 'push', 'origin', 'main')
             return {'ok': True, 'updated': True,
                     'message': f'已更新: {latest["date"]} 净值 {latest["nav"]}'}
         else:
@@ -408,6 +411,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.do_GET()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Max-Age', '86400')
+        self.end_headers()
 
     def _404(self):
         self.send_response(404)
