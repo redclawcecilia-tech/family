@@ -250,7 +250,7 @@ def git_push(date, nav):
             msg = (r.stderr or r.stdout or '').strip()
             log.error(msg)
             raise RuntimeError(f'命令失败: {" ".join(cmd)}\n{msg}')
-        return r.stdout.strip()
+        return (r.stdout or '').strip()
 
     subprocess.run(['git', 'config', 'user.name', 'family-nav-monitor'],
                    cwd=REPO_PATH, check=False)

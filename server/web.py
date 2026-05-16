@@ -186,7 +186,7 @@ def _run_git(*cmd):
     if r.returncode != 0:
         msg = (r.stderr or r.stdout or '').strip()
         raise RuntimeError(f'命令失败: {" ".join(cmd)}\n{msg}')
-    return r.stdout.strip()
+    return (r.stdout or '').strip()
 
 
 def _do_refresh():
