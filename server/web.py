@@ -198,9 +198,15 @@ def _push_to_github(github_token, github_user, github_repo):
             cwd=REPO_PATH, capture_output=True, text=True, check=False)
         if r.returncode != 0:
             msg = (r.stderr or r.stdout or '').replace(github_token, '***').strip()
-            raise RuntimeError(f'git push 失败: {msg}')
-        return (r.stdout or r.stderr or '').replace(github_token, '***').strip()
-    return _run_git('git', 'push', 'origin', 'main')
+            log.warning(f'git push 失败，已保留本地更新: {msg}')
+            return {'ok': False, 'message': msg}
+        return {'ok': True, 'message': (r.stdout or r.stderr or '').replace(github_token, '***').strip()}
+
+    try:
+        return {'ok': True, 'message': _run_git('git', 'push', 'origin', 'main')}
+    except Exception as e:
+        log.warning(f'git push 失败，已保留本地更新: {e}')
+        return {'ok': False, 'message': str(e)}
 
 
 def _publish_index_html(date, nav, commit_prefix):
@@ -221,8 +227,8 @@ def _publish_index_html(date, nav, commit_prefix):
     github_token = os.environ.get('GITHUB_TOKEN', '')
     github_user = os.environ.get('GITHUB_USER', 'redclawcecilia-tech')
     github_repo = os.environ.get('GITHUB_REPO', 'family')
-    push_output = _push_to_github(github_token, github_user, github_repo)
-    return {'committed': committed, 'push': push_output}
+    push_result = _push_to_github(github_token, github_user, github_repo)
+    return {'committed': committed, 'push': push_result}
 
 
 def _do_refresh():
@@ -306,16 +312,21 @@ def _do_refresh():
         updated = _update_html(latest['date'], latest['nav'])
 
         if updated:
-            _publish_index_html(latest['date'], latest['nav'], '净值手动更新')
+            published = _publish_index_html(latest['date'], latest['nav'], '净值手动更新')
+            sync_note = 'GitHub 已同步' if published['push']['ok'] else '本地已更新，GitHub 暂未同步'
             return {'ok': True, 'updated': True,
-                    'message': f'已更新: {latest["date"]} 净值 {latest["nav"]}'}
+                    'message': f'已更新: {latest["date"]} 净值 {latest["nav"]}；{sync_note}'}
         else:
             published = _publish_index_html(latest['date'], latest['nav'], '净值补推')
             if published['committed']:
+                sync_note = 'GitHub 已同步' if published['push']['ok'] else '本地已更新，GitHub 暂未同步'
                 return {'ok': True, 'updated': True,
-                        'message': f'已补推本地净值 {latest["date"]} = {latest["nav"]}，页面部署即将更新'}
+                        'message': f'已补推本地净值 {latest["date"]} = {latest["nav"]}；{sync_note}'}
+            if not published['push']['ok']:
+                return {'ok': True, 'updated': False,
+                        'message': f'最新净值 {latest["date"]} = {latest["nav"]} 已在服务器本地；GitHub 暂未同步'}
             return {'ok': True, 'updated': False,
-                    'message': f'最新净值 {latest["date"]} = {latest["nav"]} 已是最新，无需更新；已检查 GitHub 推送'}
+                    'message': f'最新净值 {latest["date"]} = {latest["nav"]} 已是最新，无需更新；GitHub 已同步'}
 
     except Exception as e:
         log.exception('刷新失败')

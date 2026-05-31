@@ -275,10 +275,15 @@ def git_push(date, nav):
             cwd=REPO_PATH, capture_output=True, text=True, check=False)
         if r.returncode != 0:
             msg = (r.stderr or r.stdout or '').replace(GITHUB_TOKEN, '***').strip()
-            log.error(msg)
-            raise RuntimeError(f'git push 失败: {msg}')
+            log.warning(f'git push 失败，已保留本地更新: {msg}')
+            return False
     else:
-        run('git', 'push', 'origin', 'main')
+        try:
+            run('git', 'push', 'origin', 'main')
+        except Exception as e:
+            log.warning(f'git push 失败，已保留本地更新: {e}')
+            return False
+    return True
 
 
 # ============ 处理一封邮件 ============
@@ -298,11 +303,17 @@ def process_uid(client, uid, processed_uids):
             return
         log.info(f'🎯 解析到净值 {info["date"]} = {info["nav"]} （主题: {info["subject"][:60]}）')
         if update_html(info['date'], info['nav']):
-            git_push(info['date'], info['nav'])
-            log.info('✅ 已推送到 GitHub，Cloudflare 约 30-60 秒后部署完成')
+            pushed = git_push(info['date'], info['nav'])
+            if pushed:
+                log.info('✅ 已推送到 GitHub，Cloudflare 约 30-60 秒后部署完成')
+            else:
+                log.info('✅ 本地已更新；GitHub 暂未同步')
         else:
-            git_push(info['date'], info['nav'])
-            log.info('✅ 本地已是最新，已检查并重试推送到 GitHub')
+            pushed = git_push(info['date'], info['nav'])
+            if pushed:
+                log.info('✅ 本地已是最新，已检查并重试推送到 GitHub')
+            else:
+                log.info('✅ 本地已是最新；GitHub 暂未同步')
         processed_uids.add(uid_key)
         _save_processed_uids(processed_uids)
     except Exception:
