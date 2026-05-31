@@ -258,7 +258,14 @@ def git_push(date, nav):
                    cwd=REPO_PATH, check=False)
 
     run('git', 'add', 'index.html')
-    run('git', 'commit', '-m', f'净值自动更新 {date} NAV={nav}')
+    diff = subprocess.run(['git', 'diff', '--cached', '--quiet'],
+                          cwd=REPO_PATH, capture_output=True, text=True, check=False)
+    if diff.returncode == 1:
+        run('git', 'commit', '-m', f'净值自动更新 {date} NAV={nav}')
+    elif diff.returncode != 0:
+        msg = (diff.stderr or diff.stdout or '').strip()
+        log.error(msg)
+        raise RuntimeError(f'检查 index.html 变更失败: {msg}')
 
     if GITHUB_TOKEN:
         r = subprocess.run(
@@ -293,6 +300,9 @@ def process_uid(client, uid, processed_uids):
         if update_html(info['date'], info['nav']):
             git_push(info['date'], info['nav'])
             log.info('✅ 已推送到 GitHub，Cloudflare 约 30-60 秒后部署完成')
+        else:
+            git_push(info['date'], info['nav'])
+            log.info('✅ 本地已是最新，已检查并重试推送到 GitHub')
         processed_uids.add(uid_key)
         _save_processed_uids(processed_uids)
     except Exception:

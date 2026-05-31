@@ -189,6 +189,42 @@ def _run_git(*cmd):
     return (r.stdout or '').strip()
 
 
+def _push_to_github(github_token, github_user, github_repo):
+    if github_token:
+        r = subprocess.run(
+            ['git', 'push',
+             f'https://{github_user}:{github_token}@github.com/{github_user}/{github_repo}.git',
+             'HEAD:main'],
+            cwd=REPO_PATH, capture_output=True, text=True, check=False)
+        if r.returncode != 0:
+            msg = (r.stderr or r.stdout or '').replace(github_token, '***').strip()
+            raise RuntimeError(f'git push 失败: {msg}')
+        return (r.stdout or r.stderr or '').replace(github_token, '***').strip()
+    return _run_git('git', 'push', 'origin', 'main')
+
+
+def _publish_index_html(date, nav, commit_prefix):
+    _run_git('git', 'config', 'user.name', 'family-nav-monitor')
+    _run_git('git', 'config', 'user.email', 'monitor@localhost')
+    _run_git('git', 'add', 'index.html')
+
+    diff = subprocess.run(['git', 'diff', '--cached', '--quiet'],
+                          cwd=REPO_PATH, capture_output=True, text=True, check=False)
+    committed = False
+    if diff.returncode == 1:
+        _run_git('git', 'commit', '-m', f'{commit_prefix} {date} NAV={nav}')
+        committed = True
+    elif diff.returncode != 0:
+        msg = (diff.stderr or diff.stdout or '').strip()
+        raise RuntimeError(f'检查 index.html 变更失败: {msg}')
+
+    github_token = os.environ.get('GITHUB_TOKEN', '')
+    github_user = os.environ.get('GITHUB_USER', 'redclawcecilia-tech')
+    github_repo = os.environ.get('GITHUB_REPO', 'family')
+    push_output = _push_to_github(github_token, github_user, github_repo)
+    return {'committed': committed, 'push': push_output}
+
+
 def _do_refresh():
     if not IMAP_USER or not IMAP_PASSWORD:
         return {'ok': False, 'error': 'IMAP_USER 或 IMAP_PASSWORD 未配置'}
@@ -270,29 +306,16 @@ def _do_refresh():
         updated = _update_html(latest['date'], latest['nav'])
 
         if updated:
-            _run_git('git', 'config', 'user.name', 'family-nav-monitor')
-            _run_git('git', 'config', 'user.email', 'monitor@localhost')
-            _run_git('git', 'add', 'index.html')
-            _run_git('git', 'commit', '-m', f'净值手动更新 {latest["date"]} NAV={latest["nav"]}')
-            github_token = os.environ.get('GITHUB_TOKEN', '')
-            github_user = os.environ.get('GITHUB_USER', 'redclawcecilia-tech')
-            github_repo = os.environ.get('GITHUB_REPO', 'family')
-            if github_token:
-                r = subprocess.run(
-                    ['git', 'push',
-                     f'https://{github_user}:{github_token}@github.com/{github_user}/{github_repo}.git',
-                     'HEAD:main'],
-                    cwd=REPO_PATH, capture_output=True, text=True, check=False)
-                if r.returncode != 0:
-                    msg = (r.stderr or r.stdout or '').replace(github_token, '***').strip()
-                    raise RuntimeError(f'git push 失败: {msg}')
-            else:
-                _run_git('git', 'push', 'origin', 'main')
+            _publish_index_html(latest['date'], latest['nav'], '净值手动更新')
             return {'ok': True, 'updated': True,
                     'message': f'已更新: {latest["date"]} 净值 {latest["nav"]}'}
         else:
+            published = _publish_index_html(latest['date'], latest['nav'], '净值补推')
+            if published['committed']:
+                return {'ok': True, 'updated': True,
+                        'message': f'已补推本地净值 {latest["date"]} = {latest["nav"]}，页面部署即将更新'}
             return {'ok': True, 'updated': False,
-                    'message': f'最新净值 {latest["date"]} = {latest["nav"]} 已是最新，无需更新'}
+                    'message': f'最新净值 {latest["date"]} = {latest["nav"]} 已是最新，无需更新；已检查 GitHub 推送'}
 
     except Exception as e:
         log.exception('刷新失败')
