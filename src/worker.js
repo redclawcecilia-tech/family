@@ -5,10 +5,11 @@ export default {
     const incomingUrl = new URL(request.url);
     const originUrl = new URL(incomingUrl.pathname + incomingUrl.search, ORIGIN);
 
-    const headers = new Headers(request.headers);
-    headers.set("Host", originUrl.host);
-    headers.set("X-Forwarded-Host", incomingUrl.host);
-    headers.set("X-Forwarded-Proto", incomingUrl.protocol.replace(":", ""));
+    const headers = new Headers();
+    headers.set("Accept", request.headers.get("Accept") || "*/*");
+    headers.set("User-Agent", "family-cloudflare-proxy");
+    const contentType = request.headers.get("Content-Type");
+    if (contentType) headers.set("Content-Type", contentType);
 
     const originRequest = new Request(originUrl, {
       method: request.method,
@@ -29,8 +30,8 @@ export default {
     responseHeaders.set("X-Family-Proxy", "cloudflare-worker");
     responseHeaders.delete("Content-Length");
 
-    const contentType = responseHeaders.get("Content-Type") || "";
-    if (contentType.includes("text/html")) {
+    const responseContentType = responseHeaders.get("Content-Type") || "";
+    if (responseContentType.includes("text/html")) {
       const html = await originResponse.text();
       const rewritten = html.replace(
         /apiBase:\s*["']http:\/\/118\.196\.102\.49:8080["']/,
