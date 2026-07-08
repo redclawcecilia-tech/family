@@ -95,7 +95,7 @@ const CONFIG = {
   intervalReturn: 11.38,
   fundInceptionDate: "2025-04-21",
 
-  // 【API 地址】从 Cloudflare 访问时填服务器地址，本地访问留空
+  // 【API 地址】直接打开服务器页面时可留空；HTTPS 页面不能调用 HTTP 刷新接口
   apiBase: "http://118.196.102.49:8080",
   fees: {
     managementFeeAnnual: 0.01,        // 管理费 1%/年（已在每日净值中扣除，无需单独计算）
@@ -298,6 +298,49 @@ const CONFIG = {
     border-radius: 8px;
     font-size: 12px; color: #6a5a1f; line-height: 1.7;
   }
+  .refresh-panel {
+    margin: 20px 16px 0;
+    text-align: center;
+  }
+  .refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 164px;
+    min-height: 46px;
+    padding: 12px 26px;
+    border: none;
+    border-radius: 24px;
+    background: linear-gradient(135deg, #1a3668, #2a4f8c);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(26,54,104,0.25);
+    transition: transform .18s ease, opacity .18s ease, box-shadow .18s ease;
+  }
+  .refresh-btn:active { transform: translateY(1px); box-shadow: 0 2px 8px rgba(26,54,104,0.22); }
+  .refresh-btn:disabled {
+    cursor: not-allowed;
+    opacity: .62;
+    box-shadow: none;
+  }
+  .refresh-icon { font-size: 17px; line-height: 1; }
+  .refresh-note {
+    margin: 10px auto 0;
+    max-width: 320px;
+    font-size: 12px;
+    color: #8a93a3;
+    line-height: 1.55;
+  }
+  .refresh-msg {
+    margin-top: 8px;
+    min-height: 20px;
+    font-size: 13px;
+    color: #888;
+    line-height: 1.5;
+  }
   .footer-meta {
     text-align: center; font-size: 11px; color: #aaa;
     margin-top: 20px; line-height: 1.6;
@@ -459,18 +502,13 @@ const CONFIG = {
     <strong>温馨提示：</strong>青琰琰知一号是一只<strong>低波动量化基金</strong>，运行一年以来年化 14%、回撤极小，目前基金总规模 46 亿元，运作稳健。净值每周三由基金公司公布一次，孩子会为您定期更新此报告。
   </div>
 
-  <div style="text-align:center; margin:20px 16px 0;">
-    <button id="refreshBtn" onclick="doRefresh()" style="
-      display:inline-flex; align-items:center; gap:6px;
-      padding:12px 32px; border:none; border-radius:24px;
-      background:linear-gradient(135deg,#1a3668,#2a4f8c);
-      color:#fff; font-size:16px; font-weight:600;
-      cursor:pointer; box-shadow:0 4px 14px rgba(26,54,104,0.25);
-      transition:all .2s;
-    ">
-      <span id="refreshIcon">🔄</span> 更新
+  <div class="refresh-panel" id="refreshPanel">
+    <button id="refreshBtn" class="refresh-btn" type="button" onclick="doRefresh()">
+      <span id="refreshIcon" class="refresh-icon">↻</span>
+      <span id="refreshText">检查最新净值</span>
     </button>
-    <div id="refreshMsg" style="margin-top:10px; font-size:13px; color:#888; min-height:20px;"></div>
+    <div class="refresh-note" id="refreshNote">每周三公布后自动更新；看起来不是最新时可以点一下。</div>
+    <div id="refreshMsg" class="refresh-msg" role="status" aria-live="polite"></div>
   </div>
 
   <div class="footer-meta">
@@ -488,6 +526,24 @@ const CONFIG = {
   const fmtPct = n => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
   const daysBetween = (d1, d2) => Math.round((new Date(d2) - new Date(d1)) / 86400000);
   const chDate = d => { const [y,m,day]=d.split('-'); return y+'年'+m+'月'+day+'日'; };
+  const refreshUrl = () => {
+    const base = (CONFIG.apiBase || '').trim().replace(/\/+$/, '');
+    return (base || '') + '/api/refresh';
+  };
+  const refreshBlockReason = () => {
+    const base = (CONFIG.apiBase || '').trim();
+    if (!base && location.protocol === 'file:') return '本地预览不能直接连接刷新服务。';
+    if (!base) return '';
+    try {
+      const target = new URL(base, location.href);
+      if (location.protocol === 'https:' && target.protocol === 'http:') {
+        return '当前页面是安全链接，浏览器会拦截普通 HTTP 刷新接口。';
+      }
+    } catch (e) {
+      return '刷新地址配置有误，暂时只显示自动更新结果。';
+    }
+    return '';
+  };
 
   // 个人最新净值（如果没更新过就是建仓净值）
   const pn = CONFIG.personalNav;
@@ -529,6 +585,7 @@ const CONFIG = {
   document.getElementById('latestNav').textContent = latest.nav.toFixed(4);
   document.getElementById('latestNavDate').textContent = latest.date;
   document.getElementById('metaDate').textContent = latest.date;
+  configureRefreshPanel(latest.date);
 
   // 收益情况
   const heroProfit = document.getElementById('heroProfit');
@@ -731,41 +788,60 @@ const CONFIG = {
     svg.innerHTML = `<line x1="${padLR}" y1="${baseY}" x2="${W-padLR}" y2="${baseY}" stroke="#e5e7ef" stroke-width="1"/>${bars}${labels}`;
   }
 
+  function configureRefreshPanel(latestDate) {
+    const btn = document.getElementById('refreshBtn');
+    const note = document.getElementById('refreshNote');
+    const msg = document.getElementById('refreshMsg');
+    const reason = refreshBlockReason();
+    if (!btn || !note || !msg) return;
+    if (reason) {
+      btn.disabled = true;
+      note.textContent = '自动更新已开启。需要手动检查时，请打开服务器页面。';
+      msg.textContent = reason;
+      msg.style.color = '#8a93a3';
+      return;
+    }
+    note.textContent = '每周三公布后自动更新；看起来不是最新时可以点一下。';
+    msg.textContent = '当前数据截至 ' + latestDate;
+    msg.style.color = '#8a93a3';
+  }
+
   window.doRefresh = async function() {
     const btn = document.getElementById('refreshBtn');
     const icon = document.getElementById('refreshIcon');
     const msg = document.getElementById('refreshMsg');
-    const apiBase = CONFIG.apiBase || '';
+    const reason = refreshBlockReason();
+    if (reason) {
+      btn.disabled = true;
+      msg.textContent = reason;
+      msg.style.color = '#8a93a3';
+      return;
+    }
     btn.disabled = true;
-    btn.style.opacity = '0.7';
-    icon.textContent = '⏳';
+    icon.textContent = '…';
     msg.textContent = '正在从邮箱获取最新净值...';
     msg.style.color = '#888';
     try {
-      if (location.protocol === 'https:' && apiBase.startsWith('http://')) {
-        throw new Error('HTTPS 页面不能直连 HTTP 更新接口，请打开服务器页面更新。');
-      }
-      const resp = await fetch(apiBase + '/api/refresh', { cache: 'no-store' });
-      if (!resp.ok) throw new Error('刷新接口返回 HTTP ' + resp.status);
+      const resp = await fetch(refreshUrl(), { method: 'POST', cache: 'no-store' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       if (data.ok && data.updated) {
-        msg.textContent = '✅ ' + data.message + '  页面即将刷新...';
+        msg.textContent = data.message + '。页面即将刷新...';
         msg.style.color = '#1d7a3d';
         setTimeout(() => location.reload(), 1500);
       } else if (data.ok) {
         msg.textContent = data.message;
         msg.style.color = '#888';
       } else {
-        msg.textContent = '❌ ' + (data.error || '未知错误');
+        msg.textContent = data.error || '刷新失败，请稍后再试';
         msg.style.color = '#c54141';
       }
     } catch (e) {
-      msg.textContent = '❌ ' + (e && e.message ? e.message : '网络错误，请稍后重试');
+      msg.textContent = '网络连接失败，请稍后再试';
       msg.style.color = '#c54141';
     }
     btn.disabled = false;
-    btn.style.opacity = '1';
-    icon.textContent = '🔄';
+    icon.textContent = '↻';
   };
 })();
 </script>

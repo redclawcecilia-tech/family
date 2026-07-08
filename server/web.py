@@ -14,6 +14,8 @@ import socket
 import logging
 import tempfile
 import subprocess
+import threading
+import time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, unquote
@@ -47,6 +49,11 @@ PROXY_HOST = os.environ.get('IMAP_PROXY_HOST', '') or ''
 PROXY_PORT = int(os.environ.get('IMAP_PROXY_PORT', '0') or '0')
 PROXY_USERNAME = os.environ.get('IMAP_PROXY_USERNAME', '') or ''
 PROXY_PASSWORD = os.environ.get('IMAP_PROXY_PASSWORD', '') or ''
+
+REFRESH_ALLOWED_ORIGIN = os.environ.get('REFRESH_ALLOWED_ORIGIN', '*') or '*'
+REFRESH_MIN_INTERVAL = int(os.environ.get('REFRESH_MIN_INTERVAL', '20') or '20')
+_REFRESH_LOCK = threading.Lock()
+_LAST_REFRESH_AT = 0.0
 
 ALLOWED = {
     '/': 'index.html',
@@ -349,7 +356,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = urlparse(unquote(self.path)).path
             if path == '/api/refresh':
-                self._handle_refresh()
+                self._json({
+                    'ok': False,
+                    'error': '请使用页面按钮刷新，或以 POST 方式调用 /api/refresh',
+                }, status=405, allow='POST, OPTIONS')
                 return
             mapped = ALLOWED.get(path)
             if not mapped:
@@ -385,11 +395,28 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
     def _handle_refresh(self):
+        global _LAST_REFRESH_AT
         log.info('📥 收到手动刷新请求')
+        if not _REFRESH_LOCK.acquire(blocking=False):
+            self._json({'ok': False, 'error': '已有刷新正在进行，请稍后再试'}, status=409)
+            return
+        try:
+            now = time.time()
+            wait = REFRESH_MIN_INTERVAL - (now - _LAST_REFRESH_AT)
+            if wait > 0:
+                result = {
+                    'ok': True,
+                    'updated': False,
+                    'message': f'刚刚检查过，请约 {int(wait) + 1} 秒后再试',
+                }
+            else:
+                _LAST_REFRESH_AT = now
+                result = self._refresh_with_timeout()
+        finally:
+            _REFRESH_LOCK.release()
+        self._json(result)
 
-        # 1) 拿到结果——挂线程跑 _do_refresh，墙钟超时 15s。
-        #    （IMAPClient 的 timeout 只覆盖单个 socket 读，多步操作累加可能 >60s）
-        import threading
+    def _refresh_with_timeout(self):
         _holder = {'result': None}
 
         def _runner():
@@ -410,16 +437,18 @@ class Handler(BaseHTTPRequestHandler):
 
         if t.is_alive():
             log.warning('_do_refresh 在 15 秒内未返回（IMAP 卡住）')
-            result = {'ok': False,
-                      'error': '刷新超时（>15s）—— IMAP 服务器无响应。可能 imap.163.com 出站不通、163 授权码失效、或网络抖动。请到服务器看 logs/web.log。'}
-        else:
-            result = _holder['result']
-            if result is None:
-                result = {'ok': False, 'error': '内部错误：_do_refresh 返回 None'}
+            return {
+                'ok': False,
+                'error': '刷新超时（>15s）—— IMAP 服务器无响应。可能 imap.163.com 出站不通、163 授权码失效、或网络抖动。请到服务器看 logs/web.log。',
+            }
+        result = _holder['result']
+        if result is None:
+            return {'ok': False, 'error': '内部错误：_do_refresh 返回 None'}
+        return result
 
-        # 2) 序列化（理论上不会失败，但仍然兜底）
+    def _json(self, payload, status=200, allow=None):
         try:
-            body = json.dumps(result, ensure_ascii=False).encode('utf-8')
+            body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         except Exception as e:
             log.exception('JSON 序列化失败')
             body = (
@@ -427,15 +456,17 @@ class Handler(BaseHTTPRequestHandler):
                 + str(e).replace('"', "'")
                 + '"}'
             ).encode('utf-8', 'replace')
-
-        # 3) 写响应（客户端可能已断开，必须捕获 socket 异常）
         try:
-            self.send_response(200)
+            self.send_response(status)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
-            self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-store')
-            self.send_header('X-Refresh-Version', '2')  # bump on each /api/refresh patch
+            self.send_header('Access-Control-Allow-Origin', REFRESH_ALLOWED_ORIGIN)
+            self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.send_header('X-Refresh-Version', '3')
+            if allow:
+                self.send_header('Allow', allow)
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
@@ -443,15 +474,26 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             log.exception('写响应失败')
 
+    def do_POST(self):
+        path = urlparse(unquote(self.path)).path
+        if path == '/api/refresh':
+            self._handle_refresh()
+            return
+        self._404()
+
     def do_HEAD(self):
         self.do_GET()
 
     def do_OPTIONS(self):
+        path = urlparse(unquote(self.path)).path
         self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Origin', REFRESH_ALLOWED_ORIGIN)
+        if path == '/api/refresh':
+            self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        else:
+            self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.send_header('Access-Control-Max-Age', '86400')
+        self.send_header('Access-Control-Max-Age', '600')
         self.end_headers()
 
     def _404(self):

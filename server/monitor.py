@@ -96,8 +96,7 @@ def _load_processed_uids():
 
 def _save_processed_uids(uids):
     try:
-        PROCESSED_UIDS_FILE.write_text(
-            json.dumps(sorted(str(u) for u in uids)), encoding='utf-8')
+        _atomic_write(PROCESSED_UIDS_FILE, json.dumps(sorted(str(u) for u in uids)))
     except Exception:
         pass
 
