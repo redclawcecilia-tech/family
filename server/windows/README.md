@@ -70,6 +70,8 @@ GITHUB_USER=redclawcecilia-tech
 GITHUB_REPO=family
 GITHUB_TOKEN=<您的 ghp_ 开头 Token>
 REPO_PATH=C:/family
+REFRESH_ALLOWED_ORIGIN=*
+REFRESH_MIN_INTERVAL=20
 ```
 
 > 真实密码和 Token 不要放进 git 跟踪的文件。`config.env` 已在 .gitignore 里，不会被提交。
