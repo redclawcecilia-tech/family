@@ -15,6 +15,7 @@ import sys
 import time
 import json
 import email
+import io
 import socket
 import logging
 import tempfile
@@ -96,8 +97,7 @@ def _load_processed_uids():
 
 def _save_processed_uids(uids):
     try:
-        PROCESSED_UIDS_FILE.write_text(
-            json.dumps(sorted(str(u) for u in uids)), encoding='utf-8')
+        _atomic_write(PROCESSED_UIDS_FILE, json.dumps(sorted(str(u) for u in uids)))
     except Exception:
         pass
 
@@ -191,6 +191,102 @@ def parse_nav(raw_bytes):
     return None
 
 
+# ============ 强制调减（业绩报酬固定计提）邮件 ============
+REDUCTION_KEYWORDS = ['强制调减', '強制調減']
+
+
+def _parse_reduction_pdf_text(text):
+    """从中信中证交易确认函 PDF 文本提取：计提日/净值/调减份额/业绩报酬/份额余额。
+    依据：确认份额 × 单位净值 = 确认金额（业绩报酬）；份额余额为剩余最大金额数。
+    注意：该 PDF 提取文本字符间带空格，先去掉空格（保留换行作字段分隔）。"""
+    text = re.sub(r'[ 	]+', '', (text or '').replace('\x00', ''))
+    m = re.search(r'(\d\.\d{3,4})\s*\((\d{8})\)', text)
+    if not m:
+        return None
+    nav = float(m.group(1))
+    d = m.group(2)
+    date = f'{d[:4]}-{d[4:6]}-{d[6:]}'
+    nums = [float(x.replace(',', '')) for x in re.findall(r'\d{1,3}(?:,\d{3})+\.\d{2}', text)]
+    pair = None
+    for i, a in enumerate(nums):
+        for j, b in enumerate(nums):
+            if i == j:
+                continue
+            if abs(a * nav - b) < 0.05:
+                pair = (a, b)
+                break
+        if pair:
+            break
+    if not pair:
+        return None
+    reduced, fee = pair
+    balances = [n for n in nums if n > reduced and abs(n - fee) > 0.01]
+    if not balances:
+        return None
+    balance = max(balances)
+    return {'date': date, 'nav': nav, 'reducedShares': reduced, 'fee': fee, 'balance': balance}
+
+
+def parse_reduction(raw_bytes):
+    """解析【强制调减】交易确认邮件 → dict 或 None（解析失败仅告警，不影响净值监听）"""
+    msg = email.message_from_bytes(raw_bytes)
+    subject = decode_subject(msg.get('Subject', ''))
+    if not any(k in subject for k in REDUCTION_KEYWORDS):
+        return None
+    if ('SXR047' not in subject) and ('琰知' not in subject):
+        return None
+    pdfs = []
+    for part in msg.walk():
+        fname = part.get_filename() or ''
+        if part.get_content_type() == 'application/pdf' or fname.lower().endswith('.pdf'):
+            payload = part.get_payload(decode=True)
+            if payload:
+                pdfs.append(payload)
+    if not pdfs:
+        log.warning(f'📧 "{subject[:50]}" 强制调减邮件无 PDF 附件，需人工处理')
+        return None
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        log.error('缺少 pypdf，无法解析强制调减确认函。请执行: pip install pypdf')
+        return None
+    for blob in pdfs:
+        try:
+            text = '\n'.join(pg.extract_text() or '' for pg in PdfReader(io.BytesIO(blob)).pages)
+        except Exception as e:
+            log.warning(f'PDF 解析失败: {e}')
+            continue
+        info = _parse_reduction_pdf_text(text)
+        if info:
+            info['subject'] = subject
+            return info
+    log.warning(f'📧 "{subject[:50]}" 强制调减 PDF 内容解析失败，需人工处理')
+    return None
+
+
+def update_reduction_html(info):
+    """把一次固定计提写入 index.html：crystalEvents 追加 + shares 更新为份额余额（幂等）"""
+    content = HTML_PATH.read_text(encoding='utf-8')
+    m = re.search(r'(crystalEvents\s*:\s*\[)([\s\S]*?)(\])', content)
+    if not m:
+        raise ValueError('未在 HTML 中找到 crystalEvents 数组')
+    if re.search(rf'date:\s*["\']{re.escape(info["date"])}["\']', m.group(2)):
+        log.info(f'⏭ 计提日期 {info["date"]} 已存在，跳过')
+        return False
+    entry = (f'    {{ date: "{info["date"]}", nav: {info["nav"]}, '
+             f'reducedShares: {info["reducedShares"]}, fee: {info["fee"]} }}')
+    body = m.group(2).rstrip()
+    if body and not body.endswith(','):
+        body += ','
+    body = body + '\n' + entry + '\n  '
+    content = content[:m.start()] + m.group(1) + body + m.group(3) + content[m.end():]
+    content, n = re.subn(r'shares:\s*[\d.]+', f'shares: {info["balance"]}', content, count=1)
+    if n != 1:
+        raise ValueError('未找到 shares 配置')
+    _atomic_write(HTML_PATH, content)
+    return True
+
+
 # ============ HTML 更新（原子写入）============
 def update_html(date, nav):
     content = HTML_PATH.read_text(encoding='utf-8')
@@ -242,7 +338,7 @@ def _atomic_write(path, content):
 
 
 # ============ Git 推送 ============
-def git_push(date, nav):
+def git_push(date, nav, message=None):
     def run(*cmd):
         log.info('$ ' + ' '.join(cmd))
         r = subprocess.run(cmd, cwd=REPO_PATH, capture_output=True, text=True)
@@ -261,7 +357,7 @@ def git_push(date, nav):
     diff = subprocess.run(['git', 'diff', '--cached', '--quiet'],
                           cwd=REPO_PATH, capture_output=True, text=True, check=False)
     if diff.returncode == 1:
-        run('git', 'commit', '-m', f'净值自动更新 {date} NAV={nav}')
+        run('git', 'commit', '-m', message or f'净值自动更新 {date} NAV={nav}')
     elif diff.returncode != 0:
         msg = (diff.stderr or diff.stdout or '').strip()
         log.error(msg)
@@ -275,10 +371,15 @@ def git_push(date, nav):
             cwd=REPO_PATH, capture_output=True, text=True, check=False)
         if r.returncode != 0:
             msg = (r.stderr or r.stdout or '').replace(GITHUB_TOKEN, '***').strip()
-            log.error(msg)
-            raise RuntimeError(f'git push 失败: {msg}')
+            log.warning(f'git push 失败，已保留本地更新: {msg}')
+            return False
     else:
-        run('git', 'push', 'origin', 'main')
+        try:
+            run('git', 'push', 'origin', 'main')
+        except Exception as e:
+            log.warning(f'git push 失败，已保留本地更新: {e}')
+            return False
+    return True
 
 
 # ============ 处理一封邮件 ============
@@ -293,16 +394,33 @@ def process_uid(client, uid, processed_uids):
         raw = fetched[uid][b'RFC822']
         info = parse_nav(raw)
         if not info:
+            red = parse_reduction(raw)
+            if red:
+                log.info(f'🎯 解析到固定计提 {red["date"]} 调减 {red["reducedShares"]} 份 '
+                         f'业绩报酬 {red["fee"]} 元 余额 {red["balance"]} 份（主题: {red["subject"][:60]}）')
+                if update_reduction_html(red):
+                    msg = f'业绩报酬固定计提 {red["date"]} 调减{red["reducedShares"]}份'
+                    pushed = git_push(red['date'], red['nav'], message=msg)
+                    if pushed:
+                        log.info('✅ 计提更新已推送到 GitHub')
+                    else:
+                        log.info('✅ 计提更新已写入本地；GitHub 暂未同步')
             processed_uids.add(uid_key)
             _save_processed_uids(processed_uids)
             return
         log.info(f'🎯 解析到净值 {info["date"]} = {info["nav"]} （主题: {info["subject"][:60]}）')
         if update_html(info['date'], info['nav']):
-            git_push(info['date'], info['nav'])
-            log.info('✅ 已推送到 GitHub，Cloudflare 约 30-60 秒后部署完成')
+            pushed = git_push(info['date'], info['nav'])
+            if pushed:
+                log.info('✅ 已推送到 GitHub，Cloudflare 约 30-60 秒后部署完成')
+            else:
+                log.info('✅ 本地已更新；GitHub 暂未同步')
         else:
-            git_push(info['date'], info['nav'])
-            log.info('✅ 本地已是最新，已检查并重试推送到 GitHub')
+            pushed = git_push(info['date'], info['nav'])
+            if pushed:
+                log.info('✅ 本地已是最新，已检查并重试推送到 GitHub')
+            else:
+                log.info('✅ 本地已是最新；GitHub 暂未同步')
         processed_uids.add(uid_key)
         _save_processed_uids(processed_uids)
     except Exception:
@@ -318,7 +436,7 @@ def _imap_since_date(days):
 
 def _search_nav_emails(client, days):
     since = _imap_since_date(days)
-    nav_keywords = ['SXR047', '琰知', '基金净值']
+    nav_keywords = ['SXR047', '琰知', '基金净值', '强制调减']
     uids = client.search(['SINCE', since])
     if not uids:
         return []

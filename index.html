@@ -29,7 +29,12 @@ const CONFIG = {
   initialAmount: 1000000,       // 本金 100 万
   initialDate: "2026-03-31",    // 建仓日
   initialNAV: 1.2869,           // 建仓净值
-  shares: 777061.15,            // 确认份额
+  shares: 756868.16,            // 确认份额（2026-09-30 强制调减 20,192.99 份后）
+
+  // 【业绩报酬固定计提记录】每次计提（强制调减）后由监控自动追加；费后预估以最后一次计提起算
+  crystalEvents: [
+    { date: "2026-09-30", nav: 1.3625, reducedShares: 20192.99, fee: 27512.95, confirmDate: "2026-10-08" }
+  ],
 
   // 【您个人的净值更新记录】—— 每次收到邮件就加一行
   personalNav: [
@@ -635,10 +640,13 @@ const CONFIG = {
   const hasUpdate = pn.length > 1;
 
   const currentValue = CONFIG.shares * latest.nav;
-  const profit = currentValue - CONFIG.initialAmount;
-  const totalReturn = (latest.nav / CONFIG.initialNAV - 1) * 100;
+  const profit = currentValue - CONFIG.initialAmount;   // 份额已扣历次强制调减，此为实际盈亏
+  const totalReturn = (currentValue / CONFIG.initialAmount - 1) * 100;
   const days = daysBetween(CONFIG.initialDate, latest.date);
-  const annualReturnCalc = days > 0 ? (Math.pow(latest.nav / CONFIG.initialNAV, 365/days) - 1) * 100 : 0;
+  const annualReturnCalc = days > 0 ? (Math.pow(currentValue / CONFIG.initialAmount, 365/days) - 1) * 100 : 0;
+  const crystals = CONFIG.crystalEvents || [];
+  const lastCrystal = crystals.length ? crystals[crystals.length - 1] : null;
+  const totalCrystallizedFee = crystals.reduce((s, c) => s + c.fee, 0);
 
   // 业绩报酬计算（依据 PPT 第28页原文，两条规则同时生效）：
   // ① 年化 > 6% 时，对所有收益按 60% 收取
@@ -652,9 +660,15 @@ const CONFIG = {
     const feeByFloor = profit - hurdleProfit;              // 规则②（保底 6%）
     return Math.min(feeBy60pct, feeByFloor);  // 两条都满足
   }
-  const perfFee = calcPerfFee(profit, CONFIG.initialAmount, days);
-  const netProfit = profit - perfFee;
-  const netValue = CONFIG.initialAmount + netProfit;
+  // 费后预估只覆盖「上一次计提至今」的区间，已计提部分不重复扣
+  const periodBaseDate = lastCrystal ? lastCrystal.date : CONFIG.initialDate;
+  const periodBaseNav = lastCrystal ? lastCrystal.nav : CONFIG.initialNAV;
+  const periodDays = daysBetween(periodBaseDate, latest.date);
+  const periodBaseValue = CONFIG.shares * periodBaseNav;
+  const periodProfit = CONFIG.shares * (latest.nav - periodBaseNav);
+  const perfFee = calcPerfFee(periodProfit, periodBaseValue, periodDays);
+  const netValue = currentValue - perfFee;
+  const netProfit = netValue - CONFIG.initialAmount;
   const netReturn = (netProfit / CONFIG.initialAmount) * 100;
   const netAnnualReturn = days > 0 ? (Math.pow(netValue / CONFIG.initialAmount, 365/days) - 1) * 100 : 0;
 
@@ -692,24 +706,29 @@ const CONFIG = {
         <span class="profit-pill flat">与本金持平</span>
         <span class="profit-text">共 ${days} 天</span>`;
     }
-    // 费后资产
+    // 费后资产（账面份额已扣历次计提；此处再扣本期预估值）
+    const crystalNote = lastCrystal
+      ? `<div class="af-label" style="margin-top:4px;font-size:11px;color:#8a9ab1;">${lastCrystal.date} 已固定计提业绩报酬 ${fmtFullMoney(lastCrystal.fee)} 元（调减 ${fmtShares(lastCrystal.reducedShares)} 份）</div>`
+      : '';
     if (perfFee > 0) {
       afterFeeEl.innerHTML = `
-        <div class="af-label">▼ 扣除业绩报酬后（实际到手）</div>
+        <div class="af-label">▼ 扣除本期预估业绩报酬后（实际到手）</div>
         <div class="after-fee-row">
           <span>${fmtFullMoney(netValue)} 元</span>
           <span class="af-value">+${fmtFullMoney(netProfit)} 元 (${fmtPct(netReturn)})</span>
         </div>
-        <div class="af-label" style="margin-top:4px;font-size:11px;color:#8a9ab1;">预估业绩报酬 ${fmtFullMoney(perfFee)} 元（年化保底 6%）</div>`;
+        <div class="af-label" style="margin-top:4px;font-size:11px;color:#8a9ab1;">自 ${periodBaseDate} 计提后至今，预估业绩报酬 ${fmtFullMoney(perfFee)} 元（年化保底 6%）</div>
+        ${crystalNote}`;
     } else if (profit > 0) {
       afterFeeEl.innerHTML = `
-        <div class="af-label">年化 ≤ 6%，暂无业绩报酬，账面即为实际收益</div>`;
+        <div class="af-label">本期年化 ≤ 6%，暂无新增业绩报酬，账面即为实际收益</div>
+        ${crystalNote}`;
     } else {
-      afterFeeEl.innerHTML = '';
+      afterFeeEl.innerHTML = crystalNote;
     }
     totalReturnEl.textContent = fmtPct(totalReturn);
     totalReturnEl.className = 'metric-value ' + (totalReturn >= 0 ? 'positive' : '');
-    totalReturnSubEl.textContent = '账面毛收益率';
+    totalReturnSubEl.textContent = '已扣历次计提的实际收益率';
   } else {
     heroProfit.innerHTML = `
       <span class="profit-pill flat">刚建仓 ${days} 天，待净值更新</span>`;
@@ -722,24 +741,27 @@ const CONFIG = {
   // 费用预估
   const feeEstimateEl = document.getElementById('feeEstimate');
   if (feeEstimateEl) {
+    const crystalHistory = crystals.length
+      ? `<div class="risk-desc" style="margin-bottom:8px;">已固定计提 ${crystals.length} 次，合计 <strong>${fmtFullMoney(totalCrystallizedFee)} 元</strong>（${crystals.map(c => c.date + '：' + fmtFullMoney(c.fee) + ' 元').join('；')}），以调减份额方式扣除。</div>`
+      : '';
     if (hasUpdate && perfFee > 0) {
-      feeEstimateEl.innerHTML = `
+      feeEstimateEl.innerHTML = crystalHistory + `
         <div class="risk-top">
-          <span class="risk-name" style="color:#c54141;">⇩ 当前预估扣费</span>
+          <span class="risk-name" style="color:#c54141;">⇩ 本期预估扣费</span>
           <span class="risk-value" style="color:#c54141;">-${fmtFullMoney(perfFee)} 元</span>
         </div>
         <div class="risk-desc">
-          按您已持有 ${days} 天、年化 ${annualReturnCalc.toFixed(2)}% 计算：若此刻结算，业绩报酬约 <strong>${fmtFullMoney(perfFee)} 元</strong>，
+          自 ${periodBaseDate} 上次计提以来 ${periodDays} 天：若此刻结算，本期业绩报酬约 <strong>${fmtFullMoney(perfFee)} 元</strong>，
           您实际到手 <strong style="color:#1d7a3d;">${fmtFullMoney(netProfit)} 元</strong>（年化 ${netAnnualReturn.toFixed(2)}%）。<br>
-          <span style="color:#8a9ab1;">注：业绩报酬在每季度末计提，在此之前净值未扣此项，账面数字会显得更高。</span>
+          <span style="color:#8a9ab1;">注：业绩报酬在每季度末计提，下次计提后此处自动归零重算。</span>
         </div>`;
     } else if (hasUpdate && profit > 0) {
-      feeEstimateEl.innerHTML = `
+      feeEstimateEl.innerHTML = crystalHistory + `
         <div class="risk-desc" style="color:#1d7a3d;">
-          当前年化 ${annualReturnCalc.toFixed(2)}%，未超过 6% 门槛，<strong>无业绩报酬</strong>，账面即为实际到手。
+          本期（${periodBaseDate} 至今）收益未超过 6% 年化门槛，<strong>暂无新增业绩报酬</strong>，账面即为实际到手。
         </div>`;
     } else {
-      feeEstimateEl.innerHTML = `<div class="risk-desc">净值更新后将显示费用估算。</div>`;
+      feeEstimateEl.innerHTML = crystalHistory + `<div class="risk-desc">净值更新后将显示费用估算。</div>`;
     }
   }
 
