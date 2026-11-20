@@ -23,6 +23,8 @@ import subprocess
 from pathlib import Path
 from email.header import decode_header
 
+from html_guard import validate_html, write_html_checked
+
 try:
     from imapclient import IMAPClient
     from imapclient.exceptions import IMAPClientError
@@ -286,7 +288,7 @@ def update_reduction_html(info):
     content, n = re.subn(r'shares:\s*[\d.]+', f'shares: {info["balance"]}', content, count=1)
     if n != 1:
         raise ValueError('未找到 shares 配置')
-    _atomic_write(HTML_PATH, content)
+    write_html_checked(HTML_PATH, content)
     return True
 
 
@@ -321,7 +323,7 @@ def update_html(date, nav, acc=None):
     content = re.sub(r'latestDate\s*:\s*["\'][\d-]+["\']',
                      f'latestDate: "{date}"', content)
 
-    _atomic_write(HTML_PATH, content)
+    write_html_checked(HTML_PATH, content)
     return True
 
 
@@ -342,6 +344,9 @@ def _atomic_write(path, content):
 
 # ============ Git 推送 ============
 def git_push(date, nav, message=None):
+    # 即使本次没有新增数据，补推前也必须确认当前页面能正常渲染。
+    validate_html(HTML_PATH)
+
     def run(*cmd):
         log.info('$ ' + ' '.join(cmd))
         r = subprocess.run(cmd, cwd=REPO_PATH, capture_output=True, text=True)

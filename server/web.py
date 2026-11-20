@@ -22,6 +22,8 @@ from urllib.parse import urlparse, unquote
 from email.header import decode_header
 import datetime as _dt
 
+from html_guard import validate_html, write_html_checked
+
 _cfg = Path(__file__).resolve().parent / 'config.env'
 if _cfg.exists():
     for _ln in _cfg.read_text(encoding='utf-8').splitlines():
@@ -186,7 +188,7 @@ def _update_html(date, nav, acc=None):
         content = content[:mm.start()] + mm.group(1) + '\n' + body + mm.group(3) + content[mm.end():]
     content = re.sub(r'latestDate\s*:\s*["\'][\d-]+["\']',
                      f'latestDate: "{date}"', content)
-    _atomic_write(HTML_PATH, content)
+    write_html_checked(HTML_PATH, content)
     return True
 
 
@@ -223,6 +225,8 @@ def _push_to_github(github_token, github_user, github_repo):
 
 
 def _publish_index_html(date, nav, commit_prefix, push_async=False):
+    # 补推已有数据时也先自检，避免把损坏的本地页面发布出去。
+    validate_html(HTML_PATH)
     _run_git('git', 'config', 'user.name', 'family-nav-monitor')
     _run_git('git', 'config', 'user.email', 'monitor@localhost')
     _run_git('git', 'add', 'index.html')
