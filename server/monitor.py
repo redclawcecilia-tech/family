@@ -180,9 +180,12 @@ def parse_nav(raw_bytes):
             m.group = lambda i: [None, date_match.group(1), nav_match.group(1)][i]
 
     if m:
+        acc_m = re.search(r'SXR047[^|\n]*\|[^|\n]*\|\s*\d{4}-\d{2}-\d{2}\s*\|\s*[\d.]+\s*\|\s*([\d.]+)', body)
+        acc = float(acc_m.group(1)) if acc_m else None
         return {
             'date': m.group(1),
             'nav': float(m.group(2)),
+            'acc': acc,
             'subject': subject,
         }
 
@@ -288,14 +291,14 @@ def update_reduction_html(info):
 
 
 # ============ HTML 更新（原子写入）============
-def update_html(date, nav):
+def update_html(date, nav, acc=None):
     content = HTML_PATH.read_text(encoding='utf-8')
 
     if re.search(rf'date:\s*["\']{re.escape(date)}["\']', content):
         log.info(f'⏭ 日期 {date} 已存在，跳过')
         return False
 
-    entry = f'    {{ date: "{date}", nav: {nav} }}'
+    entry = f'    {{ date: "{date}", nav: {nav}' + (f', acc: {acc}' if acc else '') + ' }}'
     for name in ('personalNav', 'fundHistory'):
         pattern = re.compile(rf'({re.escape(name)}\s*:\s*\[)([\s\S]*?)(\s*\])')
         mm = pattern.search(content)
@@ -409,7 +412,7 @@ def process_uid(client, uid, processed_uids):
             _save_processed_uids(processed_uids)
             return
         log.info(f'🎯 解析到净值 {info["date"]} = {info["nav"]} （主题: {info["subject"][:60]}）')
-        if update_html(info['date'], info['nav']):
+        if update_html(info['date'], info['nav'], info.get('acc')):
             pushed = git_push(info['date'], info['nav'])
             if pushed:
                 log.info('✅ 已推送到 GitHub，Cloudflare 约 30-60 秒后部署完成')

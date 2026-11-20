@@ -142,7 +142,9 @@ def _parse_nav(raw_bytes):
             m = _M()
             m.group = lambda i: [None, date_match.group(1), nav_match.group(1)][i]
     if m:
-        return {'date': m.group(1), 'nav': float(m.group(2)), 'subject': subject}
+        acc_m = re.search(r'SXR047[^|\n]*\|[^|\n]*\|\s*\d{4}-\d{2}-\d{2}\s*\|\s*[\d.]+\s*\|\s*([\d.]+)', body)
+        acc = float(acc_m.group(1)) if acc_m else None
+        return {'date': m.group(1), 'nav': float(m.group(2)), 'acc': acc, 'subject': subject}
     return None
 
 
@@ -161,11 +163,11 @@ def _atomic_write(path, content):
         raise
 
 
-def _update_html(date, nav):
+def _update_html(date, nav, acc=None):
     content = HTML_PATH.read_text(encoding='utf-8')
     if re.search(rf'date:\s*["\']{re.escape(date)}["\']', content):
         return False
-    entry = f'    {{ date: "{date}", nav: {nav} }}'
+    entry = f'    {{ date: "{date}", nav: {nav}' + (f', acc: {acc}' if acc else '') + ' }}'
     for name in ('personalNav', 'fundHistory'):
         pattern = re.compile(rf'({re.escape(name)}\s*:\s*\[)([\s\S]*?)(\s*\])')
         mm = pattern.search(content)
@@ -325,7 +327,7 @@ def _do_refresh():
 
         fetched_all.sort(key=lambda x: x['date'], reverse=True)
         latest = fetched_all[0]
-        updated = _update_html(latest['date'], latest['nav'])
+        updated = _update_html(latest['date'], latest['nav'], latest.get('acc'))
 
         if updated:
             _publish_index_html(latest['date'], latest['nav'], '净值手动更新', push_async=True)

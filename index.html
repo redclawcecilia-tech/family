@@ -57,7 +57,6 @@ const CONFIG = {
 
 
 
-
     { date: "2026-03-31", nav: 1.2869 },
     { date: "2026-04-22", nav: 1.2966 },   // 自 Gmail 邮件自动读取
     { date: "2026-04-23", nav: 1.2961 },
@@ -79,9 +78,7 @@ const CONFIG = {
     { date: "2026-10-13", nav: 1.3593 },
     { date: "2026-10-16", nav: 1.3602 },
     { date: "2026-10-21", nav: 1.3596 },
-    { date: "2026-11-04", nav: 1.3616 },
-    { date: "2026-11-19", nav: 1.3624 }
-  
+    { date: "2026-11-04", nav: 1.3616 }
   
   
   
@@ -105,7 +102,6 @@ const CONFIG = {
 
   // 【琰知一号基金历史净值】（来自招商 PPT，展示给父母建立信心）
   fundHistory: [
-
 
 
 
@@ -158,9 +154,7 @@ const CONFIG = {
     { date: "2026-10-13", nav: 1.3593 },
     { date: "2026-10-16", nav: 1.3602 },
     { date: "2026-10-21", nav: 1.3596 },
-    { date: "2026-11-04", nav: 1.3616 },
-    { date: "2026-11-19", nav: 1.3624 }
-  
+    { date: "2026-11-04", nav: 1.3616 }
   
   
   
@@ -192,6 +186,9 @@ const CONFIG = {
 
   // 【API 地址】直接打开服务器页面时可留空；HTTPS 页面不能调用 HTTP 刷新接口
   apiBase: "http://118.196.102.49:8080",
+  // 每份累计分红（累计净值-单位净值，2026-10-21/11-04/11-19 邮件实测恒为 0.049）
+  // 早期无 acc 的点按此常数折算；新邮件带来的点直接记录真实 acc
+  dividendOffset: 0.049,
   fees: {
     managementFeeAnnual: 0.01,        // 管理费 1%/年（已在每日净值中扣除，无需单独计算）
     subscriptionFee: 0.00,            // 申购费 1% 可免 —— 按0处理
@@ -459,7 +456,7 @@ const CONFIG = {
   </div>
 
   <div class="hero-card">
-    <div class="hero-label" id="heroLabel">当前资产总值（账面）</div>
+    <div class="hero-label" id="heroLabel">现在一共有多少钱</div>
     <div class="hero-amount">
       <span id="currentValue">0</span><span class="unit">元</span>
     </div>
@@ -469,22 +466,22 @@ const CONFIG = {
 
   <div class="metrics">
     <div class="metric-card">
-      <div class="metric-label">本金</div>
+      <div class="metric-label">当初投入</div>
       <div class="metric-value" id="principal">100万</div>
       <div class="metric-sub" id="principalDate">2026-03-31 申购</div>
     </div>
     <div class="metric-card">
-      <div class="metric-label">持有份额</div>
+      <div class="metric-label">您持有多少份</div>
       <div class="metric-value" id="shares">0</div>
       <div class="metric-sub">基金份额</div>
     </div>
     <div class="metric-card">
-      <div class="metric-label">累计收益率</div>
+      <div class="metric-label">一共赚了</div>
       <div class="metric-value positive" id="totalReturn">+0.00%</div>
       <div class="metric-sub" id="totalReturnSub">自建仓以来</div>
     </div>
     <div class="metric-card">
-      <div class="metric-label">最新净值</div>
+      <div class="metric-label">每份值多少钱</div>
       <div class="metric-value" id="latestNav">1.0000</div>
       <div class="metric-sub" id="latestNavDate">—</div>
     </div>
@@ -492,17 +489,16 @@ const CONFIG = {
 
   <!-- 基金历史走势（展示给父母建立信心） -->
   <div class="card">
-    <div class="card-title">基金近一年走势 <span class="card-subtitle">琰知一号</span></div>
+    <div class="card-title">基金近一年走势 <span class="card-subtitle">含分红（累计净值）</span></div>
     <svg class="nav-chart" id="navChart" viewBox="0 0 360 180" preserveAspectRatio="none"></svg>
     <div class="chart-axis" id="navAxis"></div>
-    <div class="pending-note" id="buyMarker">
-      <strong>⬇ 建仓点：</strong>您在 2026-03-31 以净值 1.2869 买入，正好在这条曲线的末端。
-    </div>
+    <div class="pending-note" id="buyMarker"></div>
+    <div class="legend" id="navLegend"></div>
   </div>
 
   <!-- 每月赚多少 -->
   <div class="card">
-    <div class="card-title">基金每月赚多少 <span class="card-subtitle">近12个月</span></div>
+    <div class="card-title">每个月赚多少（含分红） <span class="card-subtitle">近12个月</span></div>
     <svg class="monthly-chart" id="monthlyChart" viewBox="0 0 360 160" preserveAspectRatio="none"></svg>
     <div class="legend">
       <span class="legend-item"><span class="legend-dot" style="background:#1d7a3d"></span>盈利月份</span>
@@ -512,69 +508,68 @@ const CONFIG = {
 
   <!-- 稳健度 -->
   <div class="card">
-    <div class="card-title">基金稳健程度</div>
+    <div class="card-title">这只基金稳不稳</div>
 
     <div class="risk-item">
       <div class="risk-top">
-        <span class="risk-name">年化收益率<span class="risk-badge badge-excellent">优秀</span></span>
+        <span class="risk-name">一年大约能赚<span class="risk-badge badge-excellent">优秀</span></span>
         <span class="risk-value" id="annRet">+14.32%</span>
       </div>
-      <div class="risk-desc">按历史表现折算全年收益，大约相当于放在基金里每年涨 14%。</div>
+      <div class="risk-desc">按过去的成绩折算，相当于一年涨 14% 左右。过去不代表以后，仅供参考。</div>
     </div>
 
     <div class="risk-item">
       <div class="risk-top">
-        <span class="risk-name">最大亏过多少钱<span class="risk-badge badge-excellent">极小</span></span>
+        <span class="risk-name">最多跌过多少<span class="risk-badge badge-excellent">极小</span></span>
         <span class="risk-value" id="maxDD">-0.41%</span>
       </div>
-      <div class="risk-desc">过去运行10个月里，资产从高点回落最多只有这么点，几乎没有亏过。</div>
+      <div class="risk-desc">从最高点往下跌，最多也只跌了这么一点点，几乎没亏过。</div>
     </div>
 
     <div class="risk-item">
       <div class="risk-top">
-        <span class="risk-name">波动幅度<span class="risk-badge badge-excellent">平稳</span></span>
+        <span class="risk-name">涨跌幅度<span class="risk-badge badge-excellent">平稳</span></span>
         <span class="risk-value" id="volatility">2.05%</span>
       </div>
-      <div class="risk-desc">年化波动仅 2.05%，比银行理财稍波动一些，但涨跌幅度很小，持有体感平稳。</div>
+      <div class="risk-desc">涨涨跌跌的幅度很小，拿着不用操心。</div>
     </div>
 
     <div class="risk-item">
       <div class="risk-top">
-        <span class="risk-name">赚钱效率 (夏普比率)<span class="risk-badge badge-excellent">顶级</span></span>
+        <span class="risk-name">赚钱稳不稳（夏普比率）<span class="risk-badge badge-excellent">顶级</span></span>
         <span class="risk-value" id="sharpe">7.00</span>
       </div>
-      <div class="risk-desc">数字越高越好，一般好基金能到 2 就很厉害了，7.00 属于极少见的高效率 —— 风险小而回报稳。</div>
+      <div class="risk-desc">数字越高，说明赚得越稳。一般到 2 就算很好，7.00 非常少见。</div>
     </div>
 
     <div class="risk-item">
       <div class="risk-top">
-        <span class="risk-name">月度胜率<span class="risk-badge badge-excellent" id="winBadge">优秀</span></span>
+        <span class="risk-name">赚钱的月份<span class="risk-badge badge-excellent" id="winBadge">优秀</span></span>
         <span class="risk-value"><span id="winMonths">0</span>/<span id="totalMonths">0</span></span>
       </div>
-      <div class="risk-desc">过去每个月里，大部分月份都是赚钱的。</div>
+      <div class="risk-desc">过去的月份里，大多数都在赚钱。</div>
     </div>
   </div>
 
   <!-- 费用结构 -->
   <div class="card">
-    <div class="card-title">基金费用结构 <span class="card-subtitle">为什么费后收益少了</span></div>
+    <div class="card-title">基金公司怎么收费 <span class="card-subtitle">为什么到手的收益会少一些</span></div>
     <div class="risk-item">
       <div class="risk-top">
         <span class="risk-name">管理费</span>
         <span class="risk-value">1% / 年</span>
       </div>
-      <div class="risk-desc">按日从基金净值中扣除，公布的净值已经是扣过管理费后的数字。</div>
+      <div class="risk-desc">每天在净值里扣一点，您看到的净值已经扣过这笔钱了，不用再算。</div>
     </div>
     <div class="risk-item">
       <div class="risk-top">
-        <span class="risk-name">业绩报酬</span>
+        <span class="risk-name">业绩报酬（赚得多才收）</span>
         <span class="risk-value">60%</span>
       </div>
       <div class="risk-desc">
-        <strong>规则（按招募说明书原文）：</strong><br>
-        当期间年化收益率大于 <strong>6%</strong> 时，对所有收益按 <strong>60%</strong> 收取业绩报酬，<strong>且计提后该笔份额的期间年化收益率不低于 6%（保底）</strong>。<br><br>
-        通俗讲：基金公司拿所有收益的六成，但<strong>扣完费后您的年化收益保证不低于 6%</strong>——两个规则同时生效，取对您更有利的。<br><br>
-        结算时点：每季度末最后一个工作日（3/6/9/12月）
+        只有折算成一年收益超过 <strong>6%</strong> 时才收：基金公司拿收益的六成，<br>
+        但<strong>扣完之后，您一年的收益保证不低于 6%</strong>。<br><br>
+        每季度末（3/6/9/12 月）结算一次，直接从您的份额里扣，页面上会记录每一次。
       </div>
     </div>
     <div class="risk-item" id="feeEstimate"></div>
@@ -594,13 +589,13 @@ const CONFIG = {
   </div>
 
   <div class="footer-note">
-    <strong>温馨提示：</strong>青琰琰知一号是一只<strong>低波动量化基金</strong>，运行一年以来年化 14%、回撤极小，目前基金总规模 46 亿元，运作稳健。净值每周三由基金公司公布一次，孩子会为您定期更新此报告。
+    <strong>给您的话：</strong>这只基金涨跌很小，运作稳健。基金公司一般每周公布一次净值，孩子会定期把这个页面更新好。上面的「走势」已经把分红算进去了；有什么看不懂的，随时问孩子。
   </div>
 
   <div class="refresh-panel" id="refreshPanel">
     <button id="refreshBtn" class="refresh-btn" type="button" onclick="doRefresh()">
       <span id="refreshIcon" class="refresh-icon">↻</span>
-      <span id="refreshText">检查最新净值</span>
+      <span id="refreshText">点我更新最新数据</span>
     </button>
     <div class="refresh-note" id="refreshNote">每周三公布后自动更新；看起来不是最新时可以点一下。</div>
     <div id="refreshMsg" class="refresh-msg" role="status" aria-live="polite"></div>
@@ -700,12 +695,12 @@ const CONFIG = {
     if (profit > 0) {
       heroProfit.innerHTML = `
         <span class="profit-pill gain">
-          <span class="arrow">▲</span> 账面盈利 ${fmtFullMoney(profit)} 元
+          <span class="arrow">▲</span> 一共赚了 ${fmtFullMoney(profit)} 元
         </span>
         <span class="profit-text">共 ${days} 天 · 年化 ${fmtPct(annualReturnCalc)}</span>`;
     } else if (profit < 0) {
       heroProfit.innerHTML = `
-        <span class="profit-pill flat">暂浮动 ${fmtFullMoney(profit)} 元</span>
+        <span class="profit-pill flat">暂时浮动 ${fmtFullMoney(profit)} 元</span>
         <span class="profit-text">共 ${days} 天</span>`;
     } else {
       heroProfit.innerHTML = `
@@ -714,27 +709,27 @@ const CONFIG = {
     }
     // 费后资产（账面份额已扣历次计提；此处再扣本期预估值）
     const crystalNote = lastCrystal
-      ? `<div class="af-label" style="margin-top:4px;font-size:11px;color:#8a9ab1;">${lastCrystal.date} 已固定计提业绩报酬 ${fmtFullMoney(lastCrystal.fee)} 元（调减 ${fmtShares(lastCrystal.reducedShares)} 份）</div>`
+      ? `<div class="af-label" style="margin-top:4px;font-size:11px;color:#8a9ab1;">${lastCrystal.date} 基金公司已扣报酬 ${fmtFullMoney(lastCrystal.fee)} 元（相当于 ${fmtShares(lastCrystal.reducedShares)} 份）</div>`
       : '';
     if (perfFee > 0) {
       afterFeeEl.innerHTML = `
-        <div class="af-label">▼ 扣除本期预估业绩报酬后（实际到手）</div>
+        <div class="af-label">▼ 再扣掉本期预估的报酬后，实际到手</div>
         <div class="after-fee-row">
           <span>${fmtFullMoney(netValue)} 元</span>
           <span class="af-value">+${fmtFullMoney(netProfit)} 元 (${fmtPct(netReturn)})</span>
         </div>
-        <div class="af-label" style="margin-top:4px;font-size:11px;color:#8a9ab1;">自 ${periodBaseDate} 计提后至今，预估业绩报酬 ${fmtFullMoney(perfFee)} 元（年化保底 6%）</div>
+        <div class="af-label" style="margin-top:4px;font-size:11px;color:#8a9ab1;">从上一次扣报酬（${periodBaseDate}）到现在，预估还要扣 ${fmtFullMoney(perfFee)} 元</div>
         ${crystalNote}`;
     } else if (profit > 0) {
       afterFeeEl.innerHTML = `
-        <div class="af-label">本期年化 ≤ 6%，暂无新增业绩报酬，账面即为实际收益</div>
+        <div class="af-label">这段时间收益没到收报酬的门槛，上面的钱就是您的实际收益</div>
         ${crystalNote}`;
     } else {
       afterFeeEl.innerHTML = crystalNote;
     }
     totalReturnEl.textContent = fmtPct(totalReturn);
     totalReturnEl.className = 'metric-value ' + (totalReturn >= 0 ? 'positive' : '');
-    totalReturnSubEl.textContent = '已扣历次计提的实际收益率';
+    totalReturnSubEl.textContent = '已经扣掉基金公司的报酬';
   } else {
     heroProfit.innerHTML = `
       <span class="profit-pill flat">刚建仓 ${days} 天，待净值更新</span>`;
@@ -748,7 +743,7 @@ const CONFIG = {
   const feeEstimateEl = document.getElementById('feeEstimate');
   if (feeEstimateEl) {
     const crystalHistory = crystals.length
-      ? `<div class="risk-desc" style="margin-bottom:8px;">已固定计提 ${crystals.length} 次，合计 <strong>${fmtFullMoney(totalCrystallizedFee)} 元</strong>（${crystals.map(c => c.date + '：' + fmtFullMoney(c.fee) + ' 元').join('；')}），以调减份额方式扣除。</div>`
+      ? `<div class="risk-desc" style="margin-bottom:8px;">基金公司已经扣过 ${crystals.length} 次报酬，合计 <strong>${fmtFullMoney(totalCrystallizedFee)} 元</strong>（${crystals.map(c => c.date + '：' + fmtFullMoney(c.fee) + ' 元').join('；')}），都是直接从份额里扣的。</div>`
       : '';
     if (hasUpdate && perfFee > 0) {
       feeEstimateEl.innerHTML = crystalHistory + `
@@ -757,14 +752,14 @@ const CONFIG = {
           <span class="risk-value" style="color:#c54141;">-${fmtFullMoney(perfFee)} 元</span>
         </div>
         <div class="risk-desc">
-          自 ${periodBaseDate} 上次计提以来 ${periodDays} 天：若此刻结算，本期业绩报酬约 <strong>${fmtFullMoney(perfFee)} 元</strong>，
-          您实际到手 <strong style="color:#1d7a3d;">${fmtFullMoney(netProfit)} 元</strong>（年化 ${netAnnualReturn.toFixed(2)}%）。<br>
-          <span style="color:#8a9ab1;">注：业绩报酬在每季度末计提，下次计提后此处自动归零重算。</span>
+          从 ${periodBaseDate} 上次扣报酬到现在共 ${periodDays} 天：如果今天结算，大约还要扣 <strong>${fmtFullMoney(perfFee)} 元</strong>，
+          您实际到手 <strong style="color:#1d7a3d;">${fmtFullMoney(netProfit)} 元</strong>。<br>
+          <span style="color:#8a9ab1;">每季度末扣一次，下次扣完后这里会重新算起。</span>
         </div>`;
     } else if (hasUpdate && profit > 0) {
       feeEstimateEl.innerHTML = crystalHistory + `
         <div class="risk-desc" style="color:#1d7a3d;">
-          本期（${periodBaseDate} 至今）收益未超过 6% 年化门槛，<strong>暂无新增业绩报酬</strong>，账面即为实际到手。
+          这段时间（${periodBaseDate} 至今）收益没到收报酬的门槛，<strong>不用再扣</strong>，上面的钱就是实际到手的。
         </div>`;
     } else {
       feeEstimateEl.innerHTML = crystalHistory + `<div class="risk-desc">净值更新后将显示费用估算。</div>`;
@@ -786,6 +781,8 @@ const CONFIG = {
   document.getElementById('volatility').textContent = CONFIG.annualVolatility.toFixed(2) + '%';
   document.getElementById('sharpe').textContent = CONFIG.sharpeRatio.toFixed(2);
 
+  // 累计净值：有 acc 用 acc，否则按累计分红常数折算（分红除息不会让曲线假跌）
+  const accOf = p => (p.acc !== undefined ? p.acc : p.nav + CONFIG.dividendOffset);
   // 用基金历史+个人净值合并绘制曲线
   const fullHistory = [...CONFIG.fundHistory];
   // 若有 personalNav 新点，追加到曲线末尾
@@ -795,13 +792,20 @@ const CONFIG = {
     });
   }
   drawNav(fullHistory, CONFIG.initialDate);
+  document.getElementById('buyMarker').innerHTML =
+    `<strong>看图小帮手：</strong>金点是您买入的日子（${CONFIG.initialDate}）` +
+    (crystals.length ? `；红色菱形是基金公司扣报酬的日子（${crystals.map(c => c.date).join('、')}）。` : '。') +
+    `这条线用的是累计净值，把分红也算进去了，分红不会显示成下跌。`;
+  document.getElementById('navLegend').innerHTML =
+    `<span class="legend-item"><span class="legend-dot" style="background:#d4a017"></span>买入时点</span>` +
+    (crystals.length ? `<span class="legend-item"><span class="legend-dot" style="background:#c54141"></span>扣报酬时点</span>` : '');
 
   // 月度收益
   const monthly = [];
   for (let i = 1; i < fullHistory.length; i++) {
     monthly.push({
       month: fullHistory[i].date.slice(0,7),
-      ret: (fullHistory[i].nav / fullHistory[i-1].nav - 1) * 100
+      ret: (accOf(fullHistory[i]) / accOf(fullHistory[i-1]) - 1) * 100
     });
   }
   drawMonthly(monthly);
@@ -814,7 +818,7 @@ const CONFIG = {
   function drawNav(data, buyDate) {
     const svg = document.getElementById('navChart');
     const W = 360, H = 180, pad = 28;
-    const navs = data.map(d => d.nav);
+    const navs = data.map(d => accOf(d));
     const min = Math.min(...navs) - 0.01;
     const max = Math.max(...navs) + 0.01;
     const range = max - min;
@@ -827,7 +831,7 @@ const CONFIG = {
     }
     const pts = data.map((d, i) => [
       pad + (W-pad-pad/2) * i / (n-1),
-      pad + (H-2*pad) * (1 - (d.nav - min) / range)
+      pad + (H-2*pad) * (1 - (accOf(d) - min) / range)
     ]);
     const pathD = pts.map((p,i) => (i===0?'M':'L')+p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
     const areaD = pathD + ` L${pts[n-1][0].toFixed(1)},${H-pad} L${pts[0][0].toFixed(1)},${H-pad} Z`;
@@ -847,10 +851,21 @@ const CONFIG = {
       buyMarker = `
         <line x1="${bp[0]}" y1="${pad}" x2="${bp[0]}" y2="${H-pad}" stroke="#d4a017" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>
         <circle cx="${bp[0]}" cy="${bp[1]}" r="5" fill="#d4a017" stroke="#fff" stroke-width="2"/>
-        <text x="${bp[0]}" y="${pad-4}" text-anchor="middle" font-size="10" fill="#d4a017" font-weight="bold">建仓</text>
+        <text x="${bp[0]}" y="${pad-4}" text-anchor="middle" font-size="10" fill="#d4a017" font-weight="bold">买入</text>
       `;
     }
 
+    // 业绩报酬计提时点：红色菱形
+    let crystalMarks = '';
+    crystals.forEach(c => {
+      let best = 0, bd = Infinity;
+      data.forEach((d, i) => { const diff = Math.abs(new Date(d.date) - new Date(c.date)); if (diff < bd) { bd = diff; best = i; } });
+      const cp = pts[best];
+      const x = cp[0], y = cp[1];
+      crystalMarks += `
+        <rect x="${x-5}" y="${y-5}" width="10" height="10" transform="rotate(45 ${x} ${y})" fill="#c54141" stroke="#fff" stroke-width="1.5"/>
+        <text x="${x}" y="${Math.min(y+22, H-pad+14)}" text-anchor="middle" font-size="10" fill="#c54141" font-weight="bold">扣报酬</text>`;
+    });
     const last = pts[n-1];
     svg.innerHTML = `
       <defs>
@@ -863,8 +878,9 @@ const CONFIG = {
       <path d="${areaD}" fill="url(#navGrad)"/>
       <path d="${pathD}" fill="none" stroke="#1a3668" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
       ${buyMarker}
+      ${crystalMarks}
       <circle cx="${last[0]}" cy="${last[1]}" r="4.5" fill="#1d7a3d" stroke="#fff" stroke-width="2"/>
-      <text x="${last[0]}" y="${last[1]-10}" text-anchor="middle" font-size="11" fill="#1a3668" font-weight="bold">${data[n-1].nav.toFixed(4)}</text>
+      <text x="${last[0]}" y="${last[1]-10}" text-anchor="middle" font-size="11" fill="#1a3668" font-weight="bold">${accOf(data[n-1]).toFixed(4)}</text>
     `;
 
     document.getElementById('navAxis').innerHTML = `
