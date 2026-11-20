@@ -167,7 +167,7 @@ def _update_html(date, nav, acc=None):
     content = HTML_PATH.read_text(encoding='utf-8')
     if re.search(rf'date:\s*["\']{re.escape(date)}["\']', content):
         return False
-    entry = f'    {{ date: "{date}", nav: {nav}' + (f', acc: {acc}' if acc else '') + ' }}'
+    entry = f'    {{ date: "{date}", nav: {nav}' + (f', acc: {acc}' if acc else '') + ' }'
     for name in ('personalNav', 'fundHistory'):
         pattern = re.compile(rf'({re.escape(name)}\s*:\s*\[)([\s\S]*?)(\s*\])')
         mm = pattern.search(content)

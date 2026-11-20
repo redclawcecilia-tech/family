@@ -298,7 +298,7 @@ def update_html(date, nav, acc=None):
         log.info(f'⏭ 日期 {date} 已存在，跳过')
         return False
 
-    entry = f'    {{ date: "{date}", nav: {nav}' + (f', acc: {acc}' if acc else '') + ' }}'
+    entry = f'    {{ date: "{date}", nav: {nav}' + (f', acc: {acc}' if acc else '') + ' }'
     for name in ('personalNav', 'fundHistory'):
         pattern = re.compile(rf'({re.escape(name)}\s*:\s*\[)([\s\S]*?)(\s*\])')
         mm = pattern.search(content)
