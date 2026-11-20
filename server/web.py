@@ -189,7 +189,8 @@ def _update_html(date, nav):
 
 
 def _run_git(*cmd):
-    r = subprocess.run(cmd, cwd=REPO_PATH, capture_output=True, text=True, check=False)
+    r = subprocess.run(cmd, cwd=REPO_PATH, capture_output=True, text=True,
+                     encoding='utf-8', errors='replace', timeout=30, check=False)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout or '').strip()
         raise RuntimeError(f'命令失败: {" ".join(cmd)}\n{msg}')
@@ -197,32 +198,36 @@ def _run_git(*cmd):
 
 
 def _push_to_github(github_token, github_user, github_repo):
-    if github_token:
-        r = subprocess.run(
-            ['git', 'push',
-             f'https://{github_user}:{github_token}@github.com/{github_user}/{github_repo}.git',
-             'HEAD:main'],
-            cwd=REPO_PATH, capture_output=True, text=True, check=False)
-        if r.returncode != 0:
-            msg = (r.stderr or r.stdout or '').replace(github_token, '***').strip()
-            log.warning(f'git push 失败，已保留本地更新: {msg}')
-            return {'ok': False, 'message': msg}
-        return {'ok': True, 'message': (r.stdout or r.stderr or '').replace(github_token, '***').strip()}
-
     try:
+        if github_token:
+            r = subprocess.run(
+                ['git', 'push',
+                 f'https://{github_user}:{github_token}@github.com/{github_user}/{github_repo}.git',
+                 'HEAD:main'],
+                cwd=REPO_PATH, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=45, check=False)
+            if r.returncode != 0:
+                msg = (r.stderr or r.stdout or '').replace(github_token, '***').strip()
+                log.warning(f'git push 失败，已保留本地更新: {msg}')
+                return {'ok': False, 'message': msg}
+            return {'ok': True, 'message': (r.stdout or r.stderr or '').replace(github_token, '***').strip()}
         return {'ok': True, 'message': _run_git('git', 'push', 'origin', 'main')}
+    except subprocess.TimeoutExpired:
+        log.warning('git push 超时，已保留本地更新')
+        return {'ok': False, 'message': 'git push 超时'}
     except Exception as e:
         log.warning(f'git push 失败，已保留本地更新: {e}')
         return {'ok': False, 'message': str(e)}
 
 
-def _publish_index_html(date, nav, commit_prefix):
+def _publish_index_html(date, nav, commit_prefix, push_async=False):
     _run_git('git', 'config', 'user.name', 'family-nav-monitor')
     _run_git('git', 'config', 'user.email', 'monitor@localhost')
     _run_git('git', 'add', 'index.html')
 
     diff = subprocess.run(['git', 'diff', '--cached', '--quiet'],
-                          cwd=REPO_PATH, capture_output=True, text=True, check=False)
+                          cwd=REPO_PATH, capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=30, check=False)
     committed = False
     if diff.returncode == 1:
         _run_git('git', 'commit', '-m', f'{commit_prefix} {date} NAV={nav}')
@@ -234,6 +239,10 @@ def _publish_index_html(date, nav, commit_prefix):
     github_token = os.environ.get('GITHUB_TOKEN', '')
     github_user = os.environ.get('GITHUB_USER', 'redclawcecilia-tech')
     github_repo = os.environ.get('GITHUB_REPO', 'family')
+    if push_async:
+        threading.Thread(target=_push_to_github, args=(github_token, github_user, github_repo),
+                         daemon=True).start()
+        return {'committed': committed, 'push': {'ok': True, 'message': '后台同步中'}}
     push_result = _push_to_github(github_token, github_user, github_repo)
     return {'committed': committed, 'push': push_result}
 
@@ -319,21 +328,16 @@ def _do_refresh():
         updated = _update_html(latest['date'], latest['nav'])
 
         if updated:
-            published = _publish_index_html(latest['date'], latest['nav'], '净值手动更新')
-            sync_note = 'GitHub 已同步' if published['push']['ok'] else '本地已更新，GitHub 暂未同步'
+            _publish_index_html(latest['date'], latest['nav'], '净值手动更新', push_async=True)
             return {'ok': True, 'updated': True,
-                    'message': f'已更新: {latest["date"]} 净值 {latest["nav"]}；{sync_note}'}
+                    'message': f'已更新: {latest["date"]} 净值 {latest["nav"]}；GitHub 后台同步中（约1分钟）'}
         else:
-            published = _publish_index_html(latest['date'], latest['nav'], '净值补推')
+            published = _publish_index_html(latest['date'], latest['nav'], '净值补推', push_async=True)
             if published['committed']:
-                sync_note = 'GitHub 已同步' if published['push']['ok'] else '本地已更新，GitHub 暂未同步'
                 return {'ok': True, 'updated': True,
-                        'message': f'已补推本地净值 {latest["date"]} = {latest["nav"]}；{sync_note}'}
-            if not published['push']['ok']:
-                return {'ok': True, 'updated': False,
-                        'message': f'最新净值 {latest["date"]} = {latest["nav"]} 已在服务器本地；GitHub 暂未同步'}
+                        'message': f'已补推本地净值 {latest["date"]} = {latest["nav"]}；GitHub 后台同步中（约1分钟）'}
             return {'ok': True, 'updated': False,
-                    'message': f'最新净值 {latest["date"]} = {latest["nav"]} 已是最新，无需更新；GitHub 已同步'}
+                    'message': f'已是最新：{latest["date"]} 净值 {latest["nav"]}，无需更新'}
 
     except Exception as e:
         log.exception('刷新失败')
@@ -433,13 +437,13 @@ class Handler(BaseHTTPRequestHandler):
 
         t = threading.Thread(target=_runner, daemon=True)
         t.start()
-        t.join(timeout=15)
+        t.join(timeout=45)
 
         if t.is_alive():
-            log.warning('_do_refresh 在 15 秒内未返回（IMAP 卡住）')
+            log.warning('_do_refresh 在 45 秒内未返回（IMAP 或网络卡住）')
             return {
                 'ok': False,
-                'error': '刷新超时（>15s）—— IMAP 服务器无响应。可能 imap.163.com 出站不通、163 授权码失效、或网络抖动。请到服务器看 logs/web.log。',
+                'error': '刷新超时（>45s）—— 邮箱连接或网络异常。可稍后再点一次；持续失败请到服务器看 logs/web.err.log。',
             }
         result = _holder['result']
         if result is None:
