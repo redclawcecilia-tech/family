@@ -673,6 +673,7 @@ const CONFIG = {
   const periodDays = daysBetween(periodBaseDate, latest.date);
   const periodBaseValue = CONFIG.shares * periodBaseNav;
   const periodProfit = CONFIG.shares * (latest.nav - periodBaseNav);
+  const periodAnnual = periodDays > 0 ? (Math.pow(latest.nav / periodBaseNav, 365 / periodDays) - 1) * 100 : 0;
   const perfFee = calcPerfFee(periodProfit, periodBaseValue, periodDays);
   const netValue = currentValue - perfFee;
   const netProfit = netValue - CONFIG.initialAmount;
@@ -728,7 +729,7 @@ const CONFIG = {
         ${crystalNote}`;
     } else if (profit > 0) {
       afterFeeEl.innerHTML = `
-        <div class="af-label">这段时间收益没到收报酬的门槛，上面的钱就是您的实际收益</div>
+        <div class="af-label">这段计提区间（${periodBaseDate} 起）年化 ${fmtPct(periodAnnual)}，没到 6% 的收报酬门槛，上面的钱就是您的实际收益</div>
         ${crystalNote}`;
     } else {
       afterFeeEl.innerHTML = crystalNote;
@@ -758,6 +759,7 @@ const CONFIG = {
           <span class="risk-value" style="color:#c54141;">-${fmtFullMoney(perfFee)} 元</span>
         </div>
         <div class="risk-desc">
+          这段计提区间年化 <strong>${fmtPct(periodAnnual)}</strong>，已超过 6% 门槛。<br>
           从 ${periodBaseDate} 上次扣报酬到现在共 ${periodDays} 天：如果今天结算，大约还要扣 <strong>${fmtFullMoney(perfFee)} 元</strong>，
           您实际到手 <strong style="color:#1d7a3d;">${fmtFullMoney(netProfit)} 元</strong>。<br>
           <span style="color:#8a9ab1;">每季度末扣一次，下次扣完后这里会重新算起。</span>
@@ -765,7 +767,7 @@ const CONFIG = {
     } else if (hasUpdate && profit > 0) {
       feeEstimateEl.innerHTML = crystalHistory + `
         <div class="risk-desc" style="color:#1d7a3d;">
-          这段时间（${periodBaseDate} 至今）收益没到收报酬的门槛，<strong>不用再扣</strong>，上面的钱就是实际到手的。
+          这段计提区间（${periodBaseDate} 至今）年化 <strong>${fmtPct(periodAnnual)}</strong>，没到 6% 门槛，<strong>不用扣报酬</strong>，上面的钱就是实际到手的。
         </div>`;
     } else {
       feeEstimateEl.innerHTML = crystalHistory + `<div class="risk-desc">净值更新后将显示费用估算。</div>`;
